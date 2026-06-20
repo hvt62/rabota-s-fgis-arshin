@@ -29,7 +29,7 @@ FIELDS = [
 
 # Настройки повторных попыток
 MAX_RETRIES = 3
-RETRY_DELAY = 2  # секунд, с каждым разом увеличивается
+RETRY_DELAY = 2
 
 # Сессия для запросов к Аршину (с cookies)
 _session = None
@@ -56,7 +56,9 @@ def get_arshin_session():
     try:
         resp = session.get(ARSHIN_MAIN, timeout=30)
         resp.raise_for_status()
-        print(f"[Сессия] Получены cookies: {dict(session.cookies)}")
+        print(f"[Сессия] Статус: {resp.status_code}")
+        print(f"[Сессия] Cookies от сервера: {dict(session.cookies)}")
+        print(f"[Сессия] Заголовки Set-Cookie: {resp.headers.get('Set-Cookie', 'нет')}")
     except Exception as e:
         print(f"[Сессия] Ошибка получения cookies: {e}")
 
@@ -65,9 +67,7 @@ def get_arshin_session():
 
 
 def search_arshin(mi_number):
-    """Поиск сведений о поверке по номеру СИ через API Аршин.
-    При временных ошибках (5xx, сетевые сбои) автоматически повторяет запрос.
-    """
+    """Поиск сведений о поверке по номеру СИ через API Аршин."""
     params = {
         "fq": f"*{mi_number}*",
         "q": "*",
@@ -86,12 +86,21 @@ def search_arshin(mi_number):
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             resp = session.get(ARSHIN_URL, params=params, headers=headers, timeout=60)
+            print(f"[API] Попытка {attempt}: статус {resp.status_code}")
+            print(f"[API] Cookies запроса: {dict(session.cookies)}")
+
             resp.raise_for_status()
             data = resp.json()
             docs = data.get("response", {}).get("docs", [])
+            print(f"[API] Найдено документов: {len(docs)}")
+            if docs:
+                print(f"[API] Первый результат: {docs[0]}")
             return docs
         except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response is not None else 0
+            print(f"[API] HTTP ошибка {status}: {e}")
+            if e.response is not None:
+                print(f"[API] Тело ответа: {e.response.text[:500]}")
             if 500 <= status < 600 and attempt < MAX_RETRIES:
                 last_error = f"Сервер временно недоступен ({status}), попытка {attempt}/{MAX_RETRIES}"
                 time.sleep(RETRY_DELAY * attempt)
@@ -99,18 +108,21 @@ def search_arshin(mi_number):
             last_error = str(e)
             break
         except requests.exceptions.Timeout:
+            print(f"[API] Таймаут, попытка {attempt}")
             if attempt < MAX_RETRIES:
                 last_error = f"Таймаут, попытка {attempt}/{MAX_RETRIES}"
                 time.sleep(RETRY_DELAY * attempt)
                 continue
             last_error = "Сервер не ответил за отведённое время"
         except requests.exceptions.ConnectionError:
+            print(f"[API] Ошибка соединения, попытка {attempt}")
             if attempt < MAX_RETRIES:
                 last_error = f"Ошибка соединения, попытка {attempt}/{MAX_RETRIES}"
                 time.sleep(RETRY_DELAY * attempt)
                 continue
             last_error = "Не удалось подключиться к серверу"
         except requests.exceptions.RequestException as e:
+            print(f"[API] Ошибка: {e}")
             last_error = str(e)
             break
 
@@ -153,6 +165,8 @@ def index():
             if val is not None:
                 numbers.append(str(val).strip())
 
+        print(f"[App] Прочитано номеров: {numbers}")
+
         if not numbers:
             return render_template("index.html", error="Нет номеров в первом столбце")
 
@@ -160,10 +174,13 @@ def index():
         results = []
         errors = []
         for num in numbers:
+            print(f"[App] Ищем номер: {num}")
             docs = search_arshin(num)
             if isinstance(docs, dict) and "error" in docs:
+                print(f"[App] Ошибка для {num}: {docs['error']}")
                 errors.append({"number": num, "error": docs["error"]})
             elif docs:
+                print(f"[App] Найдено {len(docs)} записей для {num}")
                 for doc in docs:
                     results.append(
                         {
@@ -184,6 +201,7 @@ def index():
                         }
                     )
             else:
+                print(f"[App] Нет данных для {num}")
                 results.append(
                     {
                         "number": num,
