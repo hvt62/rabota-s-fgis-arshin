@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Результаты поиска — ФГИС Аршин</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f0f2f5;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            font-size: 22px;
+            color: #1a1a2e;
+            margin-bottom: 4px;
+        }
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+        .actions {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            border: none;
+            transition: background 0.2s;
+        }
+        .btn-primary {
+            background: #4a6cf7;
+            color: #fff;
+        }
+        .btn-primary:hover { background: #3b5de7; }
+        .btn-secondary {
+            background: #e8e8e8;
+            color: #333;
+        }
+        .btn-secondary:hover { background: #d0d0d0; }
+        .btn-success {
+            background: #28a745;
+            color: #fff;
+        }
+        .btn-success:hover { background: #218838; }
+
+        .summary {
+            background: #fff;
+            border-radius: 10px;
+            padding: 16px 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+        .summary-item {
+            font-size: 14px;
+            color: #333;
+        }
+        .summary-item strong {
+            font-size: 18px;
+            color: #1a1a2e;
+        }
+        .summary-item.green strong { color: #28a745; }
+        .summary-item.red strong { color: #dc3545; }
+        .summary-item.gray strong { color: #6c757d; }
+
+        .table-wrapper {
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        th {
+            background: #f8f9fa;
+            color: #333;
+            font-weight: 600;
+            padding: 12px 10px;
+            text-align: left;
+            white-space: nowrap;
+            border-bottom: 2px solid #e0e0e0;
+            position: sticky;
+            top: 0;
+        }
+        td {
+            padding: 10px;
+            border-bottom: 1px solid #f0f0f0;
+            vertical-align: top;
+        }
+        tr:hover td { background: #f8f9ff; }
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .badge-green { background: #d4edda; color: #155724; }
+        .badge-red { background: #f8d7da; color: #721c24; }
+        .badge-gray { background: #e2e3e5; color: #383d41; }
+        .not-found {
+            color: #999;
+            font-style: italic;
+        }
+        .errors-block {
+            background: #fff0f0;
+            border: 1px solid #ffc0c0;
+            border-radius: 10px;
+            padding: 16px 20px;
+            margin-bottom: 20px;
+        }
+        .errors-block h3 {
+            color: #c00;
+            font-size: 15px;
+            margin-bottom: 8px;
+        }
+        .errors-block ul {
+            list-style: none;
+            font-size: 13px;
+            color: #c00;
+        }
+        .errors-block li {
+            padding: 4px 0;
+        }
+        @media (max-width: 768px) {
+            body { padding: 10px; }
+            table { font-size: 12px; }
+            th, td { padding: 8px 6px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 Результаты поиска</h1>
+        <p class="subtitle">Обработано номеров: {{ total }}</p>
+
+        <div class="actions">
+            <form method="post" action="/download/" style="display:inline">
+                <input type="hidden" name="results" value='{{ results | tojson | safe }}'>
+                <button type="submit" class="btn btn-success">📥 Скачать Excel</button>
+            </form>
+            <a href="/" class="btn btn-secondary">← Новый поиск</a>
+        </div>
+
+        {% if errors %}
+        <div class="errors-block">
+            <h3>⚠️ Ошибки при запросах к API</h3>
+            <ul>
+                {% for e in errors %}
+                <li>Номер <strong>{{ e.number }}</strong>: {{ e.error }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <div class="summary">
+            <div class="summary-item">Всего номеров: <strong>{{ total }}</strong></div>
+            <div class="summary-item green">Найдено записей: <strong>{{ results | length }}</strong></div>
+            <div class="summary-item gray">Не найдено: <strong>{{ total - results | length }}</strong></div>
+        </div>
+
+        {% if results %}
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Искомый номер</th>
+                        <th>Наименование СИ</th>
+                        <th>Тип</th>
+                        <th>Модификация</th>
+                        <th>Заводской номер</th>
+                        <th>Дата поверки</th>
+                        <th>Действителен до</th>
+                        <th>Результат</th>
+                        <th>Организация</th>
+                        <th>Документ</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in results %}
+                    <tr>
+                        <td><strong>{{ r.number }}</strong></td>
+                        <td>{{ r.title }}</td>
+                        <td>{{ r.type }}</td>
+                        <td>{{ r.modification }}</td>
+                        <td>{{ r.mi_number }}</td>
+                        <td>{{ r.verification_date }}</td>
+                        <td>{{ r.valid_date }}</td>
+                        <td>
+                            {% if r.applicability == "ГОДЕН" %}
+                                <span class="badge badge-green">ГОДЕН</span>
+                            {% elif r.applicability == "НЕ ГОДЕН" %}
+                                <span class="badge badge-red">НЕ ГОДЕН</span>
+                            {% else %}
+                                <span class="badge badge-gray">{{ r.applicability }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ r.org_title }}</td>
+                        <td>{{ r.result_docnum }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p style="color:#999; text-align:center; padding:40px;">Ничего не найдено</p>
+        {% endif %}
+    </div>
+</body>
+</html>
