@@ -66,16 +66,20 @@ def get_arshin_session():
     return _session
 
 
-def search_arshin(mi_number):
-    """Поиск сведений о поверке по номеру СИ через API Аршин."""
+def search_arshin(mi_number, mi_type=None):
+    """Поиск сведений о поверке по номеру СИ и опционально по типу."""
     params = {
-        "fq": f"*{mi_number}*",
+        "fq": [f"*{mi_number}*"],
         "q": "*",
         "fl": ",".join(FIELDS),
         "sort": "verification_date desc,org_title asc",
         "rows": 20,
         "start": 0,
     }
+    # Если указан тип — добавляем фильтр по нему
+    if mi_type:
+        params["fq"].append(f"mi.mitype:*{mi_type}*")
+
     headers = {
         "Referer": "https://fgis.gost.ru/fundmetrology/cm/results",
     }
@@ -87,7 +91,6 @@ def search_arshin(mi_number):
         try:
             resp = session.get(ARSHIN_URL, params=params, headers=headers, timeout=60)
             print(f"[API] Попытка {attempt}: статус {resp.status_code}")
-            print(f"[API] Cookies запроса: {dict(session.cookies)}")
 
             resp.raise_for_status()
             data = resp.json()
@@ -158,24 +161,28 @@ def index():
         except Exception as e:
             return render_template("index.html", error=f"Ошибка чтения Excel: {e}")
 
-        # Собираем номера из первого столбца (начиная со второй строки)
-        numbers = []
-        for row in ws.iter_rows(min_row=2, max_col=1, values_only=True):
-            val = row[0]
-            if val is not None:
-                numbers.append(str(val).strip())
+        # Собираем номера и типы из первого и второго столбцов (начиная со второй строки)
+        rows_data = []
+        for row in ws.iter_rows(min_row=2, max_col=2, values_only=True):
+            num = row[0]
+            if num is not None:
+                num = str(num).strip()
+                type_val = str(row[1]).strip() if row[1] is not None else ""
+                rows_data.append({"number": num, "type": type_val})
 
-        print(f"[App] Прочитано номеров: {numbers}")
+        print(f"[App] Прочитано строк: {rows_data}")
 
-        if not numbers:
+        if not rows_data:
             return render_template("index.html", error="Нет номеров в первом столбце")
 
-        # Опрашиваем API для каждого номера
+        # Опрашиваем API для каждой строки
         results = []
         errors = []
-        for num in numbers:
-            print(f"[App] Ищем номер: {num}")
-            docs = search_arshin(num)
+        for item in rows_data:
+            num = item["number"]
+            mi_type = item["type"] if item["type"] else None
+            print(f"[App] Ищем номер: {num}, тип: {mi_type or 'не указан'}")
+            docs = search_arshin(num, mi_type)
             if isinstance(docs, dict) and "error" in docs:
                 print(f"[App] Ошибка для {num}: {docs['error']}")
                 errors.append({"number": num, "error": docs["error"]})
@@ -185,6 +192,7 @@ def index():
                     results.append(
                         {
                             "number": num,
+                            "input_type": mi_type or "",
                             "mi_number": doc.get("mi.number", ""),
                             "title": doc.get("mi.mititle", ""),
                             "type": doc.get("mi.mitype", ""),
@@ -205,6 +213,7 @@ def index():
                 results.append(
                     {
                         "number": num,
+                        "input_type": mi_type or "",
                         "mi_number": "",
                         "title": "Не найдено",
                         "type": "",
@@ -221,7 +230,7 @@ def index():
         not_found_count = sum(1 for r in results if r["title"] == "Не найдено")
 
         return render_template(
-            "result.html", results=results, errors=errors, total=len(numbers),
+            "result.html", results=results, errors=errors, total=len(rows_data),
             not_found_count=not_found_count
         )
 
@@ -241,6 +250,7 @@ def download():
 
     headers = [
         "Искомый номер",
+        "Заданный тип",
         "Заводской номер СИ",
         "Наименование СИ",
         "Тип СИ",
@@ -257,6 +267,7 @@ def download():
         ws.append(
             [
                 r.get("number", ""),
+                r.get("input_type", ""),
                 r.get("mi_number", ""),
                 r.get("title", ""),
                 r.get("type", ""),

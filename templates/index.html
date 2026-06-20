@@ -20,7 +20,7 @@
             border-radius: 12px;
             box-shadow: 0 2px 12px rgba(0,0,0,0.1);
             padding: 40px;
-            max-width: 520px;
+            max-width: 560px;
             width: 100%;
         }
         h1 {
@@ -117,7 +117,7 @@
 <body>
     <div class="card">
         <h1>🔍 Поиск СИ в ФГИС «Аршин»</h1>
-        <p>Загрузите Excel-файл с номерами приборов учёта в первом столбце</p>
+        <p>Загрузите Excel-файл с номерами приборов учёта</p>
 
         {% if error %}
         <div class="error">{{ error }}</div>
@@ -125,8 +125,9 @@
 
         <div class="info">
             📌 Формат файла: <strong>.xlsx</strong><br>
-            📌 Номера СИ — в <strong>первом столбце</strong>, начиная со второй строки<br>
-            📌 Первая строка — заголовок (пропускается)
+            📌 <strong>Столбец A</strong> — номера СИ (обязательно)<br>
+            📌 <strong>Столбец B</strong> — обозначение типа СИ (необязательно, для фильтрации)<br>
+            📌 Первая строка — заголовки, данные начиная со второй строки
         </div>
 
         <form method="post" enctype="multipart/form-data" id="uploadForm">

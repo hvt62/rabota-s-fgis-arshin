@@ -12,7 +12,7 @@
             padding: 20px;
         }
         .container {
-            max-width: 1200px;
+            max-width: 1300px;
             margin: 0 auto;
         }
         h1 {
@@ -184,8 +184,9 @@
                 <thead>
                     <tr>
                         <th>Искомый номер</th>
+                        <th>Заданный тип</th>
                         <th>Наименование СИ</th>
-                        <th>Тип</th>
+                        <th>Тип СИ</th>
                         <th>Модификация</th>
                         <th>Заводской номер</th>
                         <th>Дата поверки</th>
@@ -199,6 +200,7 @@
                     {% for r in results %}
                     <tr>
                         <td><strong>{{ r.number }}</strong></td>
+                        <td>{{ r.input_type }}</td>
                         <td>{{ r.title }}</td>
                         <td>{{ r.type }}</td>
                         <td>{{ r.modification }}</td>
