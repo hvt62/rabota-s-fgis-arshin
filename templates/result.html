@@ -141,6 +141,47 @@
         .errors-block li {
             padding: 4px 0;
         }
+
+        /* Пагинация */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+        .pagination .page-btn {
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1px solid #d0d0d0;
+            background: #fff;
+            color: #333;
+            transition: all 0.2s;
+        }
+        .pagination .page-btn:hover {
+            background: #4a6cf7;
+            color: #fff;
+            border-color: #4a6cf7;
+        }
+        .pagination .page-btn.active {
+            background: #4a6cf7;
+            color: #fff;
+            border-color: #4a6cf7;
+        }
+        .pagination .page-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .pagination .page-info {
+            font-size: 14px;
+            color: #666;
+            padding: 0 8px;
+        }
+
         @media (max-width: 768px) {
             body { padding: 10px; }
             table { font-size: 12px; }
@@ -155,7 +196,7 @@
 
         <div class="actions">
             <form method="post" action="/download/" style="display:inline">
-                <input type="hidden" name="results" value='{{ results | tojson | safe }}'>
+                <input type="hidden" name="results" value='{{ all_results | default(results) | tojson | safe }}'>
                 <button type="submit" class="btn btn-success">📥 Скачать Excel</button>
             </form>
             <a href="/" class="btn btn-secondary">← Новый поиск</a>
@@ -174,7 +215,7 @@
 
         <div class="summary">
             <div class="summary-item">Всего номеров: <strong>{{ total }}</strong></div>
-            <div class="summary-item green">Найдено записей: <strong>{{ results | length }}</strong></div>
+            <div class="summary-item green">Найдено записей: <strong>{{ total_records | default(results | length) }}</strong></div>
             <div class="summary-item gray">Не найдено номеров: <strong>{{ not_found_count }}</strong></div>
         </div>
 
@@ -183,6 +224,7 @@
             <table>
                 <thead>
                     <tr>
+                        <th>#</th>
                         <th>Искомый номер</th>
                         <th>Заданный тип</th>
                         <th>Наименование СИ</th>
@@ -199,6 +241,7 @@
                 <tbody>
                     {% for r in results %}
                     <tr>
+                        <td>{{ (page - 1) * per_page + loop.index }}</td>
                         <td><strong>{{ r.number }}</strong></td>
                         <td>{{ r.input_type }}</td>
                         <td>{{ r.title }}</td>
@@ -223,6 +266,25 @@
                 </tbody>
             </table>
         </div>
+
+        {% if total_pages > 1 %}
+        <div class="pagination">
+            <form method="post" action="/page/" style="display:inline" class="page-form">
+                <input type="hidden" name="results" value='{{ all_results | default(results) | tojson | safe }}'>
+                <input type="hidden" name="page" value="{{ page - 1 }}">
+                <button type="submit" class="page-btn" {% if page <= 1 %}disabled{% endif %}>← Назад</button>
+            </form>
+
+            <span class="page-info">Страница {{ page }} из {{ total_pages }}</span>
+
+            <form method="post" action="/page/" style="display:inline" class="page-form">
+                <input type="hidden" name="results" value='{{ all_results | default(results) | tojson | safe }}'>
+                <input type="hidden" name="page" value="{{ page + 1 }}">
+                <button type="submit" class="page-btn" {% if page >= total_pages %}disabled{% endif %}>Вперёд →</button>
+            </form>
+        </div>
+        {% endif %}
+
         {% else %}
         <p style="color:#999; text-align:center; padding:40px;">Ничего не найдено</p>
         {% endif %}

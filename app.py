@@ -107,7 +107,7 @@ def search_arshin(mi_number, mi_type=None):
 
             # 429 Too Many Requests — ждём дольше и пробуем снова
             if status == 429 and attempt < MAX_RETRIES:
-                wait = RETRY_DELAY * attempt * 2  # 6, 12, 18, 24 сек
+                wait = RETRY_DELAY * attempt * 2
                 last_error = f"Слишком много запросов (429), пауза {wait}с, попытка {attempt}/{MAX_RETRIES}"
                 print(f"[API] {last_error}")
                 time.sleep(wait)
@@ -250,12 +250,46 @@ def index():
         # Считаем, сколько номеров не найдено
         not_found_count = sum(1 for r in results if r["title"] == "Не найдено")
 
+        # Пагинация: по 50 записей на страницу
+        per_page = 50
+        total_pages = max(1, (len(results) + per_page - 1) // per_page)
+        page_results = results[:per_page]  # первая страница
+
         return render_template(
-            "result.html", results=results, errors=errors, total=len(rows_data),
-            not_found_count=not_found_count
+            "result.html", results=page_results, errors=errors, total=len(rows_data),
+            not_found_count=not_found_count,
+            page=1, total_pages=total_pages, per_page=per_page,
+            all_results=results, total_records=len(results)
         )
 
     return render_template("index.html")
+
+
+@app.route("/page/", methods=["POST"])
+def page():
+    """Показать страницу с результатами (пагинация)."""
+    import json
+
+    results = json.loads(request.form.get("results", "[]"))
+    page = int(request.form.get("page", 1))
+    per_page = 50
+    total_pages = max(1, (len(results) + per_page - 1) // per_page)
+
+    if page < 1:
+        page = 1
+    if page > total_pages:
+        page = total_pages
+
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+    page_results = results[start_idx:end_idx]
+
+    return render_template(
+        "result.html", results=page_results, errors=[], total=0,
+        not_found_count=0,
+        page=page, total_pages=total_pages, per_page=per_page,
+        all_results=results, total_records=len(results)
+    )
 
 
 @app.route("/download/", methods=["POST"])
