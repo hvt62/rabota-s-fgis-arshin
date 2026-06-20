@@ -28,8 +28,11 @@ FIELDS = [
 ]
 
 # Настройки повторных попыток
-MAX_RETRIES = 3
-RETRY_DELAY = 2
+MAX_RETRIES = 5
+RETRY_DELAY = 3  # секунд, с каждым разом увеличивается
+
+# Задержка между запросами к разным номерам (чтобы не превышать лимит)
+REQUEST_DELAY = 2
 
 # Сессия для запросов к Аршину (с cookies)
 _session = None
@@ -58,7 +61,6 @@ def get_arshin_session():
         resp.raise_for_status()
         print(f"[Сессия] Статус: {resp.status_code}")
         print(f"[Сессия] Cookies от сервера: {dict(session.cookies)}")
-        print(f"[Сессия] Заголовки Set-Cookie: {resp.headers.get('Set-Cookie', 'нет')}")
     except Exception as e:
         print(f"[Сессия] Ошибка получения cookies: {e}")
 
@@ -102,26 +104,39 @@ def search_arshin(mi_number, mi_type=None):
         except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response is not None else 0
             print(f"[API] HTTP ошибка {status}: {e}")
-            if e.response is not None:
-                print(f"[API] Тело ответа: {e.response.text[:500]}")
-            if 500 <= status < 600 and attempt < MAX_RETRIES:
-                last_error = f"Сервер временно недоступен ({status}), попытка {attempt}/{MAX_RETRIES}"
-                time.sleep(RETRY_DELAY * attempt)
+
+            # 429 Too Many Requests — ждём дольше и пробуем снова
+            if status == 429 and attempt < MAX_RETRIES:
+                wait = RETRY_DELAY * attempt * 2  # 6, 12, 18, 24 сек
+                last_error = f"Слишком много запросов (429), пауза {wait}с, попытка {attempt}/{MAX_RETRIES}"
+                print(f"[API] {last_error}")
+                time.sleep(wait)
                 continue
+
+            # 5xx — временная ошибка сервера
+            if 500 <= status < 600 and attempt < MAX_RETRIES:
+                wait = RETRY_DELAY * attempt
+                last_error = f"Сервер временно недоступен ({status}), пауза {wait}с, попытка {attempt}/{MAX_RETRIES}"
+                print(f"[API] {last_error}")
+                time.sleep(wait)
+                continue
+
             last_error = str(e)
             break
         except requests.exceptions.Timeout:
             print(f"[API] Таймаут, попытка {attempt}")
             if attempt < MAX_RETRIES:
-                last_error = f"Таймаут, попытка {attempt}/{MAX_RETRIES}"
-                time.sleep(RETRY_DELAY * attempt)
+                wait = RETRY_DELAY * attempt
+                last_error = f"Таймаут, пауза {wait}с, попытка {attempt}/{MAX_RETRIES}"
+                time.sleep(wait)
                 continue
             last_error = "Сервер не ответил за отведённое время"
         except requests.exceptions.ConnectionError:
             print(f"[API] Ошибка соединения, попытка {attempt}")
             if attempt < MAX_RETRIES:
-                last_error = f"Ошибка соединения, попытка {attempt}/{MAX_RETRIES}"
-                time.sleep(RETRY_DELAY * attempt)
+                wait = RETRY_DELAY * attempt
+                last_error = f"Ошибка соединения, пауза {wait}с, попытка {attempt}/{MAX_RETRIES}"
+                time.sleep(wait)
                 continue
             last_error = "Не удалось подключиться к серверу"
         except requests.exceptions.RequestException as e:
@@ -170,18 +185,19 @@ def index():
                 type_val = str(row[1]).strip() if row[1] is not None else ""
                 rows_data.append({"number": num, "type": type_val})
 
-        print(f"[App] Прочитано строк: {rows_data}")
+        print(f"[App] Прочитано строк: {len(rows_data)}")
 
         if not rows_data:
             return render_template("index.html", error="Нет номеров в первом столбце")
 
-        # Опрашиваем API для каждой строки
+        # Опрашиваем API для каждой строки с задержкой между запросами
         results = []
         errors = []
-        for item in rows_data:
+        for idx, item in enumerate(rows_data):
             num = item["number"]
             mi_type = item["type"] if item["type"] else None
-            print(f"[App] Ищем номер: {num}, тип: {mi_type or 'не указан'}")
+            print(f"[App] Ищем номер {idx+1}/{len(rows_data)}: {num}, тип: {mi_type or 'не указан'}")
+
             docs = search_arshin(num, mi_type)
             if isinstance(docs, dict) and "error" in docs:
                 print(f"[App] Ошибка для {num}: {docs['error']}")
@@ -225,6 +241,11 @@ def index():
                         "result_docnum": "",
                     }
                 )
+
+            # Задержка между запросами, чтобы не превысить лимит API
+            if idx < len(rows_data) - 1:
+                print(f"[App] Пауза {REQUEST_DELAY}с перед следующим запросом...")
+                time.sleep(REQUEST_DELAY)
 
         # Считаем, сколько номеров не найдено
         not_found_count = sum(1 for r in results if r["title"] == "Не найдено")
