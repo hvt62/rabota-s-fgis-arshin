@@ -175,7 +175,7 @@
         <div class="summary">
             <div class="summary-item">Всего номеров: <strong>{{ total }}</strong></div>
             <div class="summary-item green">Найдено записей: <strong>{{ results | length }}</strong></div>
-            <div class="summary-item gray">Не найдено: <strong>{{ total - results | length }}</strong></div>
+            <div class="summary-item gray">Не найдено номеров: <strong>{{ not_found_count }}</strong></div>
         </div>
 
         {% if results %}

@@ -217,8 +217,12 @@ def index():
                     }
                 )
 
+        # Считаем, сколько номеров не найдено
+        not_found_count = sum(1 for r in results if r["title"] == "Не найдено")
+
         return render_template(
-            "result.html", results=results, errors=errors, total=len(numbers)
+            "result.html", results=results, errors=errors, total=len(numbers),
+            not_found_count=not_found_count
         )
 
     return render_template("index.html")
