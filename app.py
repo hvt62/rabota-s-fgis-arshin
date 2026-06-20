@@ -9,6 +9,7 @@ app = Flask(__name__)
 
 # Новый рабочий endpoint ФГИС «Аршин»
 ARSHIN_URL = "https://fgis.gost.ru/fundmetrology/cm/xcdb/vri/select"
+ARSHIN_MAIN = "https://fgis.gost.ru/fundmetrology/cm/"
 
 # Поля, которые запрашиваем у API
 FIELDS = [
@@ -30,6 +31,38 @@ FIELDS = [
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # секунд, с каждым разом увеличивается
 
+# Сессия для запросов к Аршину (с cookies)
+_session = None
+
+
+def get_arshin_session():
+    """Создаёт сессию с cookies, полученными с главной страницы Аршина."""
+    global _session
+    if _session is not None:
+        return _session
+
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "ru,en;q=0.9",
+    })
+
+    # Сначала заходим на главную страницу, чтобы получить cookies сессии
+    try:
+        resp = session.get(ARSHIN_MAIN, timeout=30)
+        resp.raise_for_status()
+        print(f"[Сессия] Получены cookies: {dict(session.cookies)}")
+    except Exception as e:
+        print(f"[Сессия] Ошибка получения cookies: {e}")
+
+    _session = session
+    return _session
+
 
 def search_arshin(mi_number):
     """Поиск сведений о поверке по номеру СИ через API Аршин.
@@ -44,31 +77,25 @@ def search_arshin(mi_number):
         "start": 0,
     }
     headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept": "application/json, text/plain, */*",
-        "Referer": "https://fgis.gost.ru/fundmetrology/cm/",
+        "Referer": "https://fgis.gost.ru/fundmetrology/cm/results",
     }
 
+    session = get_arshin_session()
     last_error = None
+
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            resp = requests.get(ARSHIN_URL, params=params, headers=headers, timeout=60)
+            resp = session.get(ARSHIN_URL, params=params, headers=headers, timeout=60)
             resp.raise_for_status()
             data = resp.json()
             docs = data.get("response", {}).get("docs", [])
             return docs
         except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response is not None else 0
-            # 5xx — временная ошибка сервера, пробуем снова
             if 500 <= status < 600 and attempt < MAX_RETRIES:
                 last_error = f"Сервер временно недоступен ({status}), попытка {attempt}/{MAX_RETRIES}"
                 time.sleep(RETRY_DELAY * attempt)
                 continue
-            # 4xx — ошибка клиента, повторять бесполезно
             last_error = str(e)
             break
         except requests.exceptions.Timeout:
