@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 import openpyxl
 from io import BytesIO
@@ -25,9 +26,15 @@ FIELDS = [
     "sticker_num",
 ]
 
+# Настройки повторных попыток
+MAX_RETRIES = 3
+RETRY_DELAY = 2  # секунд, с каждым разом увеличивается
+
 
 def search_arshin(mi_number):
-    """Поиск сведений о поверке по номеру СИ через API Аршин."""
+    """Поиск сведений о поверке по номеру СИ через API Аршин.
+    При временных ошибках (5xx, сетевые сбои) автоматически повторяет запрос.
+    """
     params = {
         "fq": f"*{mi_number}*",
         "q": "*",
@@ -46,14 +53,41 @@ def search_arshin(mi_number):
         "Referer": "https://fgis.gost.ru/fundmetrology/cm/",
     }
 
-    try:
-        resp = requests.get(ARSHIN_URL, params=params, headers=headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        docs = data.get("response", {}).get("docs", [])
-        return docs
-    except requests.exceptions.RequestException as e:
-        return {"error": str(e)}
+    last_error = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = requests.get(ARSHIN_URL, params=params, headers=headers, timeout=60)
+            resp.raise_for_status()
+            data = resp.json()
+            docs = data.get("response", {}).get("docs", [])
+            return docs
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else 0
+            # 5xx — временная ошибка сервера, пробуем снова
+            if 500 <= status < 600 and attempt < MAX_RETRIES:
+                last_error = f"Сервер временно недоступен ({status}), попытка {attempt}/{MAX_RETRIES}"
+                time.sleep(RETRY_DELAY * attempt)
+                continue
+            # 4xx — ошибка клиента, повторять бесполезно
+            last_error = str(e)
+            break
+        except requests.exceptions.Timeout:
+            if attempt < MAX_RETRIES:
+                last_error = f"Таймаут, попытка {attempt}/{MAX_RETRIES}"
+                time.sleep(RETRY_DELAY * attempt)
+                continue
+            last_error = "Сервер не ответил за отведённое время"
+        except requests.exceptions.ConnectionError:
+            if attempt < MAX_RETRIES:
+                last_error = f"Ошибка соединения, попытка {attempt}/{MAX_RETRIES}"
+                time.sleep(RETRY_DELAY * attempt)
+                continue
+            last_error = "Не удалось подключиться к серверу"
+        except requests.exceptions.RequestException as e:
+            last_error = str(e)
+            break
+
+    return {"error": last_error}
 
 
 def format_date(date_str):
