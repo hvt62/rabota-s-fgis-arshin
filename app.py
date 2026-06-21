@@ -29,9 +29,9 @@ FIELDS = [
 
 # Настройки повторных попыток
 MAX_RETRIES = 5
-RETRY_DELAY = 3  # секунд, с каждым разом увеличивается
+RETRY_DELAY = 3
 
-# Задержка между запросами к разным номерам (чтобы не превышать лимит)
+# Задержка между запросами к разным номерам
 REQUEST_DELAY = 2
 
 # Сессия для запросов к Аршину (с cookies)
@@ -55,7 +55,6 @@ def get_arshin_session():
         "Accept-Language": "ru,en;q=0.9",
     })
 
-    # Сначала заходим на главную страницу, чтобы получить cookies сессии
     try:
         resp = session.get(ARSHIN_MAIN, timeout=30)
         resp.raise_for_status()
@@ -68,8 +67,8 @@ def get_arshin_session():
     return _session
 
 
-def search_arshin(mi_number, mi_type=None):
-    """Поиск сведений о поверке по номеру СИ и опционально по типу."""
+def search_arshin(mi_number):
+    """Поиск сведений о поверке по номеру СИ (без фильтра по типу)."""
     params = {
         "fq": [f"*{mi_number}*"],
         "q": "*",
@@ -78,9 +77,6 @@ def search_arshin(mi_number, mi_type=None):
         "rows": 20,
         "start": 0,
     }
-    # Если указан тип — добавляем фильтр по нему
-    if mi_type:
-        params["fq"].append(f"mi.mitype:*{mi_type}*")
 
     headers = {
         "Referer": "https://fgis.gost.ru/fundmetrology/cm/results",
@@ -105,7 +101,6 @@ def search_arshin(mi_number, mi_type=None):
             status = e.response.status_code if e.response is not None else 0
             print(f"[API] HTTP ошибка {status}: {e}")
 
-            # 429 Too Many Requests — ждём дольше и пробуем снова
             if status == 429 and attempt < MAX_RETRIES:
                 wait = RETRY_DELAY * attempt * 2
                 last_error = f"Слишком много запросов (429), пауза {wait}с, попытка {attempt}/{MAX_RETRIES}"
@@ -113,7 +108,6 @@ def search_arshin(mi_number, mi_type=None):
                 time.sleep(wait)
                 continue
 
-            # 5xx — временная ошибка сервера
             if 500 <= status < 600 and attempt < MAX_RETRIES:
                 wait = RETRY_DELAY * attempt
                 last_error = f"Сервер временно недоступен ({status}), пауза {wait}с, попытка {attempt}/{MAX_RETRIES}"
@@ -148,14 +142,12 @@ def search_arshin(mi_number, mi_type=None):
 
 
 def format_date(date_str):
-    """Преобразует дату из ISO в ДД.ММ.ГГГГ."""
     if not date_str:
         return ""
     return date_str[:10].replace("-", ".")
 
 
 def format_applicability(val):
-    """Преобразует результат поверки в читаемый вид."""
     if val is True:
         return "ГОДЕН"
     elif val is False:
@@ -176,7 +168,7 @@ def index():
         except Exception as e:
             return render_template("index.html", error=f"Ошибка чтения Excel: {e}")
 
-        # Собираем номера и типы из первого и второго столбцов (начиная со второй строки)
+        # Собираем номера и типы из первого и второго столбцов
         rows_data = []
         for row in ws.iter_rows(min_row=2, max_col=2, values_only=True):
             num = row[0]
@@ -190,36 +182,43 @@ def index():
         if not rows_data:
             return render_template("index.html", error="Нет номеров в первом столбце")
 
-        # Опрашиваем API для каждой строки с задержкой между запросами
+        # Опрашиваем API для каждой строки
         results = []
         errors = []
         for idx, item in enumerate(rows_data):
             num = item["number"]
-            mi_type = item["type"] if item["type"] else None
-            print(f"[App] Ищем номер {idx+1}/{len(rows_data)}: {num}, тип: {mi_type or 'не указан'}")
+            mi_type = item["type"] if item["type"] else ""
+            print(f"[App] Ищем номер {idx+1}/{len(rows_data)}: {num}")
 
-            docs = search_arshin(num, mi_type)
+            docs = search_arshin(num)
             if isinstance(docs, dict) and "error" in docs:
                 print(f"[App] Ошибка для {num}: {docs['error']}")
                 errors.append({"number": num, "error": docs["error"]})
             elif docs:
                 print(f"[App] Найдено {len(docs)} записей для {num}")
-                for doc in docs:
+
+                # Локальная фильтрация по типу (LIKE, без учёта регистра)
+                filtered_docs = docs
+                if mi_type:
+                    mi_type_lower = mi_type.lower()
+                    filtered_docs = [
+                        doc for doc in docs
+                        if mi_type_lower in doc.get("mi.mitype", "").lower()
+                    ]
+                    print(f"[App] После фильтрации по типу '{mi_type}': {len(filtered_docs)} записей")
+
+                for doc in filtered_docs:
                     results.append(
                         {
                             "number": num,
-                            "input_type": mi_type or "",
+                            "input_type": mi_type,
                             "mi_number": doc.get("mi.number", ""),
                             "title": doc.get("mi.mititle", ""),
                             "type": doc.get("mi.mitype", ""),
                             "modification": doc.get("mi.modification", ""),
-                            "verification_date": format_date(
-                                doc.get("verification_date", "")
-                            ),
+                            "verification_date": format_date(doc.get("verification_date", "")),
                             "valid_date": format_date(doc.get("valid_date", "")),
-                            "applicability": format_applicability(
-                                doc.get("applicability")
-                            ),
+                            "applicability": format_applicability(doc.get("applicability")),
                             "org_title": doc.get("org_title", ""),
                             "result_docnum": doc.get("result_docnum", ""),
                         }
@@ -229,7 +228,7 @@ def index():
                 results.append(
                     {
                         "number": num,
-                        "input_type": mi_type or "",
+                        "input_type": mi_type,
                         "mi_number": "",
                         "title": "Не найдено",
                         "type": "",
@@ -242,18 +241,16 @@ def index():
                     }
                 )
 
-            # Задержка между запросами, чтобы не превысить лимит API
             if idx < len(rows_data) - 1:
                 print(f"[App] Пауза {REQUEST_DELAY}с перед следующим запросом...")
                 time.sleep(REQUEST_DELAY)
 
-        # Считаем, сколько номеров не найдено
         not_found_count = sum(1 for r in results if r["title"] == "Не найдено")
 
         # Пагинация: по 50 записей на страницу
         per_page = 50
         total_pages = max(1, (len(results) + per_page - 1) // per_page)
-        page_results = results[:per_page]  # первая страница
+        page_results = results[:per_page]
 
         return render_template(
             "result.html", results=page_results, errors=errors, total=len(rows_data),
@@ -267,7 +264,6 @@ def index():
 
 @app.route("/page/", methods=["POST"])
 def page():
-    """Показать страницу с результатами (пагинация)."""
     import json
 
     results = json.loads(request.form.get("results", "[]"))
@@ -294,7 +290,6 @@ def page():
 
 @app.route("/download/", methods=["POST"])
 def download():
-    """Скачать результаты в Excel."""
     import json
 
     results = json.loads(request.form.get("results", "[]"))
@@ -319,21 +314,19 @@ def download():
     ws.append(headers)
 
     for r in results:
-        ws.append(
-            [
-                r.get("number", ""),
-                r.get("input_type", ""),
-                r.get("mi_number", ""),
-                r.get("title", ""),
-                r.get("type", ""),
-                r.get("modification", ""),
-                r.get("verification_date", ""),
-                r.get("valid_date", ""),
-                r.get("applicability", ""),
-                r.get("org_title", ""),
-                r.get("result_docnum", ""),
-            ]
-        )
+        ws.append([
+            r.get("number", ""),
+            r.get("input_type", ""),
+            r.get("mi_number", ""),
+            r.get("title", ""),
+            r.get("type", ""),
+            r.get("modification", ""),
+            r.get("verification_date", ""),
+            r.get("valid_date", ""),
+            r.get("applicability", ""),
+            r.get("org_title", ""),
+            r.get("result_docnum", ""),
+        ])
 
     output = BytesIO()
     wb.save(output)
