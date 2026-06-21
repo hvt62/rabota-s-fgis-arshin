@@ -1,8 +1,10 @@
 import os
 import time
+import threading
 import requests
 import openpyxl
 from io import BytesIO
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, render_template, request, send_file
 
 app = Flask(__name__)
@@ -31,11 +33,12 @@ FIELDS = [
 MAX_RETRIES = 5
 RETRY_DELAY = 3
 
-# Задержка между запросами к разным номерам
-REQUEST_DELAY = 2
+# Параллельные запросы
+MAX_WORKERS = 3  # не больше 3, чтобы не получить 429
 
 # Сессия для запросов к Аршину (с cookies)
 _session = None
+_session_lock = threading.Lock()
 
 
 def get_arshin_session():
@@ -44,31 +47,35 @@ def get_arshin_session():
     if _session is not None:
         return _session
 
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "ru,en;q=0.9",
-    })
+    with _session_lock:
+        if _session is not None:
+            return _session
 
-    try:
-        resp = session.get(ARSHIN_MAIN, timeout=30)
-        resp.raise_for_status()
-        print(f"[Сессия] Статус: {resp.status_code}")
-        print(f"[Сессия] Cookies от сервера: {dict(session.cookies)}")
-    except Exception as e:
-        print(f"[Сессия] Ошибка получения cookies: {e}")
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "ru,en;q=0.9",
+        })
 
-    _session = session
-    return _session
+        try:
+            resp = session.get(ARSHIN_MAIN, timeout=30)
+            resp.raise_for_status()
+            print(f"[Сессия] Статус: {resp.status_code}")
+            print(f"[Сессия] Cookies от сервера: {dict(session.cookies)}")
+        except Exception as e:
+            print(f"[Сессия] Ошибка получения cookies: {e}")
+
+        _session = session
+        return _session
 
 
 def search_arshin(mi_number):
-    """Поиск сведений о поверке по номеру СИ (без фильтра по типу)."""
+    """Поиск сведений о поверке по номеру СИ."""
     params = {
         "fq": [f"*{mi_number}*"],
         "q": "*",
@@ -88,53 +95,47 @@ def search_arshin(mi_number):
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             resp = session.get(ARSHIN_URL, params=params, headers=headers, timeout=60)
-            print(f"[API] Попытка {attempt}: статус {resp.status_code}")
+            print(f"[API] {mi_number}: попытка {attempt}, статус {resp.status_code}")
 
             resp.raise_for_status()
             data = resp.json()
             docs = data.get("response", {}).get("docs", [])
-            print(f"[API] Найдено документов: {len(docs)}")
-            if docs:
-                print(f"[API] Первый результат: {docs[0]}")
+            print(f"[API] {mi_number}: найдено {len(docs)} документов")
             return docs
         except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response is not None else 0
-            print(f"[API] HTTP ошибка {status}: {e}")
+            print(f"[API] {mi_number}: HTTP ошибка {status}")
 
             if status == 429 and attempt < MAX_RETRIES:
                 wait = RETRY_DELAY * attempt * 2
-                last_error = f"Слишком много запросов (429), пауза {wait}с, попытка {attempt}/{MAX_RETRIES}"
-                print(f"[API] {last_error}")
+                print(f"[API] {mi_number}: 429, пауза {wait}с, попытка {attempt}/{MAX_RETRIES}")
                 time.sleep(wait)
                 continue
 
             if 500 <= status < 600 and attempt < MAX_RETRIES:
                 wait = RETRY_DELAY * attempt
-                last_error = f"Сервер временно недоступен ({status}), пауза {wait}с, попытка {attempt}/{MAX_RETRIES}"
-                print(f"[API] {last_error}")
+                print(f"[API] {mi_number}: 5xx, пауза {wait}с, попытка {attempt}/{MAX_RETRIES}")
                 time.sleep(wait)
                 continue
 
             last_error = str(e)
             break
         except requests.exceptions.Timeout:
-            print(f"[API] Таймаут, попытка {attempt}")
+            print(f"[API] {mi_number}: таймаут, попытка {attempt}")
             if attempt < MAX_RETRIES:
                 wait = RETRY_DELAY * attempt
-                last_error = f"Таймаут, пауза {wait}с, попытка {attempt}/{MAX_RETRIES}"
                 time.sleep(wait)
                 continue
             last_error = "Сервер не ответил за отведённое время"
         except requests.exceptions.ConnectionError:
-            print(f"[API] Ошибка соединения, попытка {attempt}")
+            print(f"[API] {mi_number}: ошибка соединения, попытка {attempt}")
             if attempt < MAX_RETRIES:
                 wait = RETRY_DELAY * attempt
-                last_error = f"Ошибка соединения, пауза {wait}с, попытка {attempt}/{MAX_RETRIES}"
                 time.sleep(wait)
                 continue
             last_error = "Не удалось подключиться к серверу"
         except requests.exceptions.RequestException as e:
-            print(f"[API] Ошибка: {e}")
+            print(f"[API] {mi_number}: ошибка {e}")
             last_error = str(e)
             break
 
@@ -153,6 +154,46 @@ def format_applicability(val):
     elif val is False:
         return "НЕ ГОДЕН"
     return str(val)
+
+
+def process_item(item):
+    """Обработать один элемент (выполняется в потоке)."""
+    num = item["number"]
+    mi_type = item["type"] if item["type"] else ""
+
+    docs = search_arshin(num)
+    if isinstance(docs, dict) and "error" in docs:
+        return {"error": {"number": num, "error": docs["error"]}}
+
+    if not docs:
+        return {"not_found": {"number": num, "input_type": mi_type}}
+
+    # Локальная фильтрация по типу (LIKE, без учёта регистра)
+    if mi_type:
+        mi_type_lower = mi_type.lower()
+        docs = [
+            doc for doc in docs
+            if mi_type_lower in doc.get("mi.mitype", "").lower()
+        ]
+        print(f"[App] {num}: после фильтрации по типу '{mi_type}': {len(docs)} записей")
+
+    records = []
+    for doc in docs:
+        records.append({
+            "number": num,
+            "input_type": mi_type,
+            "mi_number": doc.get("mi.number", ""),
+            "title": doc.get("mi.mititle", ""),
+            "type": doc.get("mi.mitype", ""),
+            "modification": doc.get("mi.modification", ""),
+            "verification_date": format_date(doc.get("verification_date", "")),
+            "valid_date": format_date(doc.get("valid_date", "")),
+            "applicability": format_applicability(doc.get("applicability")),
+            "org_title": doc.get("org_title", ""),
+            "result_docnum": doc.get("result_docnum", ""),
+        })
+
+    return {"records": records}
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -182,68 +223,43 @@ def index():
         if not rows_data:
             return render_template("index.html", error="Нет номеров в первом столбце")
 
-        # Опрашиваем API для каждой строки
+        # Параллельный опрос API (максимум 3 потока)
+        print(f"[App] Запуск {MAX_WORKERS} параллельных потоков...")
         results = []
         errors = []
-        for idx, item in enumerate(rows_data):
-            num = item["number"]
-            mi_type = item["type"] if item["type"] else ""
-            print(f"[App] Ищем номер {idx+1}/{len(rows_data)}: {num}")
 
-            docs = search_arshin(num)
-            if isinstance(docs, dict) and "error" in docs:
-                print(f"[App] Ошибка для {num}: {docs['error']}")
-                errors.append({"number": num, "error": docs["error"]})
-            elif docs:
-                print(f"[App] Найдено {len(docs)} записей для {num}")
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {executor.submit(process_item, item): item for item in rows_data}
 
-                # Локальная фильтрация по типу (LIKE, без учёта регистра)
-                filtered_docs = docs
-                if mi_type:
-                    mi_type_lower = mi_type.lower()
-                    filtered_docs = [
-                        doc for doc in docs
-                        if mi_type_lower in doc.get("mi.mitype", "").lower()
-                    ]
-                    print(f"[App] После фильтрации по типу '{mi_type}': {len(filtered_docs)} записей")
+            for future in as_completed(futures):
+                item = futures[future]
+                try:
+                    result = future.result()
+                    if "error" in result:
+                        errors.append(result["error"])
+                    elif "not_found" in result:
+                        nf = result["not_found"]
+                        results.append({
+                            "number": nf["number"],
+                            "input_type": nf["input_type"],
+                            "mi_number": "",
+                            "title": "Не найдено",
+                            "type": "",
+                            "modification": "",
+                            "verification_date": "",
+                            "valid_date": "",
+                            "applicability": "",
+                            "org_title": "",
+                            "result_docnum": "",
+                        })
+                    elif "records" in result:
+                        results.extend(result["records"])
+                except Exception as e:
+                    errors.append({"number": item["number"], "error": str(e)})
 
-                for doc in filtered_docs:
-                    results.append(
-                        {
-                            "number": num,
-                            "input_type": mi_type,
-                            "mi_number": doc.get("mi.number", ""),
-                            "title": doc.get("mi.mititle", ""),
-                            "type": doc.get("mi.mitype", ""),
-                            "modification": doc.get("mi.modification", ""),
-                            "verification_date": format_date(doc.get("verification_date", "")),
-                            "valid_date": format_date(doc.get("valid_date", "")),
-                            "applicability": format_applicability(doc.get("applicability")),
-                            "org_title": doc.get("org_title", ""),
-                            "result_docnum": doc.get("result_docnum", ""),
-                        }
-                    )
-            else:
-                print(f"[App] Нет данных для {num}")
-                results.append(
-                    {
-                        "number": num,
-                        "input_type": mi_type,
-                        "mi_number": "",
-                        "title": "Не найдено",
-                        "type": "",
-                        "modification": "",
-                        "verification_date": "",
-                        "valid_date": "",
-                        "applicability": "",
-                        "org_title": "",
-                        "result_docnum": "",
-                    }
-                )
-
-            if idx < len(rows_data) - 1:
-                print(f"[App] Пауза {REQUEST_DELAY}с перед следующим запросом...")
-                time.sleep(REQUEST_DELAY)
+        # Сортируем результаты в порядке исходных номеров
+        order = {item["number"]: idx for idx, item in enumerate(rows_data)}
+        results.sort(key=lambda r: order.get(r["number"], 999))
 
         not_found_count = sum(1 for r in results if r["title"] == "Не найдено")
 
