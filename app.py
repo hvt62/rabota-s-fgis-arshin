@@ -30,8 +30,8 @@ FIELDS = [
 ]
 
 # Настройки повторных попыток
-MAX_RETRIES = 5
-RETRY_DELAY = 3
+MAX_RETRIES = 10
+RETRY_DELAY = 5
 
 # Параллельные запросы
 MAX_WORKERS = 1  # последовательные запросы, чтобы избежать 429
