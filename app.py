@@ -171,15 +171,28 @@ def process_item(item):
     # Локальная фильтрация по типу (LIKE, без учёта регистра)
     if mi_type:
         mi_type_lower = mi_type.lower()
-        docs = [
+        filtered_docs = [
             doc for doc in docs
             if mi_type_lower in doc.get("mi.mitype", "").lower()
         ]
-        print(f"[App] {num}: после фильтрации по типу '{mi_type}': {len(docs)} записей")
+        print(f"[App] {num}: после фильтрации по типу '{mi_type}': {len(filtered_docs)} из {len(docs)} записей")
+
+        # Если после фильтрации ничего не осталось — показываем все записи,
+        # но помечаем, что тип не совпал
+        if not filtered_docs:
+            print(f"[App] {num}: тип '{mi_type}' не совпал, показываем все записи без фильтра")
+            docs_to_use = docs
+            type_mismatch = True
+        else:
+            docs_to_use = filtered_docs
+            type_mismatch = False
+    else:
+        docs_to_use = docs
+        type_mismatch = False
 
     records = []
-    for doc in docs:
-        records.append({
+    for doc in docs_to_use:
+        record = {
             "number": num,
             "input_type": mi_type,
             "mi_number": doc.get("mi.number", ""),
@@ -191,7 +204,11 @@ def process_item(item):
             "applicability": format_applicability(doc.get("applicability")),
             "org_title": doc.get("org_title", ""),
             "result_docnum": doc.get("result_docnum", ""),
-        })
+        }
+        if type_mismatch:
+            record["type_mismatch"] = True
+            record["title"] = f"⚠️ {record['title']} (тип не совпал)"
+        records.append(record)
 
     return {"records": records}
 
@@ -263,10 +280,8 @@ def index():
             print(f"[App] Пауза 30с перед повторной попыткой для {len(retry_numbers)} номеров...")
             time.sleep(30)
 
-            # Убираем старые ошибки для этих номеров
             errors = [e for e in errors if e["number"] not in retry_numbers]
 
-            # Повторяем запросы для проблемных номеров
             retry_items = [item for item in rows_data if item["number"] in retry_numbers]
             print(f"[App] Повторный запрос для: {retry_numbers}")
 
