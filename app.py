@@ -34,7 +34,7 @@ MAX_RETRIES = 10
 RETRY_DELAY = 5
 
 # Параллельные запросы
-MAX_WORKERS = 1  # последовательные запросы, чтобы избежать 429
+MAX_WORKERS = 1
 
 # Сессия для запросов к Аршину (с cookies)
 _session = None
@@ -256,6 +256,48 @@ def index():
                         results.extend(result["records"])
                 except Exception as e:
                     errors.append({"number": item["number"], "error": str(e)})
+
+        # Повторная попытка для номеров с 500 ошибкой
+        retry_numbers = [e["number"] for e in errors if "500" in e.get("error", "")]
+        if retry_numbers:
+            print(f"[App] Пауза 30с перед повторной попыткой для {len(retry_numbers)} номеров...")
+            time.sleep(30)
+
+            # Убираем старые ошибки для этих номеров
+            errors = [e for e in errors if e["number"] not in retry_numbers]
+
+            # Повторяем запросы для проблемных номеров
+            retry_items = [item for item in rows_data if item["number"] in retry_numbers]
+            print(f"[App] Повторный запрос для: {retry_numbers}")
+
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                futures = {executor.submit(process_item, item): item for item in retry_items}
+
+                for future in as_completed(futures):
+                    item = futures[future]
+                    try:
+                        result = future.result()
+                        if "error" in result:
+                            errors.append(result["error"])
+                        elif "not_found" in result:
+                            nf = result["not_found"]
+                            results.append({
+                                "number": nf["number"],
+                                "input_type": nf["input_type"],
+                                "mi_number": "",
+                                "title": "Не найдено",
+                                "type": "",
+                                "modification": "",
+                                "verification_date": "",
+                                "valid_date": "",
+                                "applicability": "",
+                                "org_title": "",
+                                "result_docnum": "",
+                            })
+                        elif "records" in result:
+                            results.extend(result["records"])
+                    except Exception as e:
+                        errors.append({"number": item["number"], "error": str(e)})
 
         # Сортируем результаты в порядке исходных номеров
         order = {item["number"]: idx for idx, item in enumerate(rows_data)}
