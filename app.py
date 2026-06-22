@@ -81,7 +81,7 @@ def search_arshin(mi_number):
         "q": "*",
         "fl": ",".join(FIELDS),
         "sort": "verification_date desc,org_title asc",
-        "rows": 20,
+        "rows": 100,
         "start": 0,
     }
 
@@ -177,8 +177,6 @@ def process_item(item):
         ]
         print(f"[App] {num}: после фильтрации по типу '{mi_type}': {len(filtered_docs)} из {len(docs)} записей")
 
-        # Если после фильтрации ничего не осталось — показываем все записи,
-        # но помечаем, что тип не совпал
         if not filtered_docs:
             print(f"[App] {num}: тип '{mi_type}' не совпал, показываем все записи без фильтра")
             docs_to_use = docs
