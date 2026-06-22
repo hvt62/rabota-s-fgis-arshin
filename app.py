@@ -74,10 +74,15 @@ def get_arshin_session():
         return _session
 
 
-def search_arshin(mi_number):
-    """Поиск сведений о поверке по номеру СИ."""
+def search_arshin(mi_number, mi_type=None):
+    """Поиск сведений о поверке по номеру СИ и (опционально) типу."""
+    # Условия фильтрации: сначала по номеру, затем по типу (если задан)
+    fq_conditions = [f"*{mi_number}*"]
+    if mi_type:
+        fq_conditions.append(f"mi.mitype:*{mi_type}*")
+
     params = {
-        "fq": [f"*{mi_number}*"],
+        "fq": fq_conditions,
         "q": "*",
         "fl": ",".join(FIELDS),
         "sort": "verification_date desc,org_title asc",
@@ -161,24 +166,32 @@ def process_item(item):
     num = item["number"]
     mi_type = item["type"] if item["type"] else ""
 
-    docs = search_arshin(num)
+    # Передаём тип в API-запрос для фильтрации на стороне сервера
+    docs = search_arshin(num, mi_type if mi_type else None)
     if isinstance(docs, dict) and "error" in docs:
         return {"error": {"number": num, "error": docs["error"]}}
+
+    # Если с типом ничего не найдено — пробуем без типа (fallback)
+    if not docs and mi_type:
+        print(f"[App] {num}: с типом '{mi_type}' ничего не найдено, пробуем без типа")
+        docs = search_arshin(num, None)
+        if isinstance(docs, dict) and "error" in docs:
+            return {"error": {"number": num, "error": docs["error"]}}
 
     if not docs:
         return {"not_found": {"number": num, "input_type": mi_type}}
 
-    # Локальная фильтрация по типу (LIKE, без учёта регистра)
+    # Локальная фильтрация по типу (LIKE, без учёта регистра) — как дополнительный слой
     if mi_type:
         mi_type_lower = mi_type.lower()
         filtered_docs = [
             doc for doc in docs
             if mi_type_lower in doc.get("mi.mitype", "").lower()
         ]
-        print(f"[App] {num}: после фильтрации по типу '{mi_type}': {len(filtered_docs)} из {len(docs)} записей")
+        print(f"[App] {num}: после локальной фильтрации по типу '{mi_type}': {len(filtered_docs)} из {len(docs)} записей")
 
         if not filtered_docs:
-            print(f"[App] {num}: тип '{mi_type}' не совпал, показываем все записи без фильтра")
+            print(f"[App] {num}: тип '{mi_type}' не совпал локально, показываем все записи без фильтра")
             docs_to_use = docs
             type_mismatch = True
         else:
@@ -222,7 +235,7 @@ def index():
             wb = openpyxl.load_workbook(file, read_only=True)
             ws = wb.active
         except Exception as e:
-            return render_template("index.html", error=f"Ошибка чтения Excel: {e}")
+            return render_template("index.html", error=f"Ошибка чтени�� Excel: {e}")
 
         # Собираем номера и типы из первого и второго столбцов
         rows_data = []
