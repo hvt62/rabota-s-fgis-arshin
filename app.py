@@ -34,7 +34,7 @@ MAX_RETRIES = 5
 RETRY_DELAY = 3
 
 # Параллельные запросы
-MAX_WORKERS = 2  # не больше 2, чтобы не получить 429
+MAX_WORKERS = 1  # последовательные запросы, чтобы избежать 429
 
 # Сессия для запросов к Аршину (с cookies)
 _session = None
@@ -223,8 +223,8 @@ def index():
         if not rows_data:
             return render_template("index.html", error="Нет номеров в первом столбце")
 
-        # Параллельный опрос API (максимум 2 потока)
-        print(f"[App] Запуск {MAX_WORKERS} параллельных потоков...")
+        # Последовательный опрос API (1 поток)
+        print(f"[App] Запуск последовательных запросов...")
         results = []
         errors = []
 
