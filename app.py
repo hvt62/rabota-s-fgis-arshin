@@ -66,14 +66,11 @@ def get_arshin_session():
         return _session
 
 
-def search_arshin(mi_number, mi_type=None):
-    """Один запрос к API (без retry). Возвращает список docs или {"error": ...}."""
-    fq_conditions = [f"*{mi_number}*"]
-    if mi_type:
-        fq_conditions.append(f"mi.mitype:*{mi_type}*")
-
+def search_arshin(mi_number):
+    """Один запрос к API (без retry). Возвращает список docs или {"error": ...}.
+       Фильтрация по типу делается локально в process_docs()."""
     params = {
-        "fq": fq_conditions,
+        "fq": [f"*{mi_number}*"],
         "q": "*",
         "fl": ",".join(FIELDS),
         "sort": "verification_date desc,org_title asc",
@@ -209,28 +206,16 @@ def index():
                 num = item["number"]
                 mi_type = item["type"] if item["type"] else ""
 
-                # Сначала ищем с типом (если задан)
-                docs = search_arshin(num, mi_type if mi_type else None)
+                docs = search_arshin(num)
 
                 # Если ошибка — остаётся для следующей итерации
                 if isinstance(docs, dict) and "error" in docs:
                     still_pending.append(item)
-                    # Пауза перед следующим запросом (кроме последнего элемента)
                     if idx < len(pending) - 1:
                         time.sleep(delay)
                     continue
 
-                # Если с типом ничего не найдено — пробуем без типа
-                if not docs and mi_type:
-                    print(f"[App] {num}: с типом ничего не найдено, пробуем без типа")
-                    docs = search_arshin(num, None)
-                    if isinstance(docs, dict) and "error" in docs:
-                        still_pending.append(item)
-                        if idx < len(pending) - 1:
-                            time.sleep(delay)
-                        continue
-
-                # Если всё равно ничего не найдено — остаётся на следующую итерацию
+                # Если ничего не найдено — остаётся на следующую итерацию
                 if not docs:
                     print(f"[App] {num}: не найден, остаётся для следующей итерации")
                     still_pending.append(item)
@@ -242,7 +227,6 @@ def index():
                 records = process_docs(docs, num, mi_type)
                 found_this_iter.extend(records)
 
-                # Пауза перед следующим запросом (кроме последнего элемента)
                 if idx < len(pending) - 1:
                     time.sleep(delay)
 
