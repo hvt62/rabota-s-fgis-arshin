@@ -74,7 +74,7 @@ def search_arshin(mi_number):
         "q": "*",
         "fl": ",".join(FIELDS),
         "sort": "verification_date desc,org_title asc",
-        "rows": 250,
+        "rows": 1000,
         "start": 0,
     }
 
