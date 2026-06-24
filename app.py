@@ -66,15 +66,41 @@ def get_arshin_session():
         return _session
 
 
-def search_arshin(mi_number):
-    """Запрос к API с 3 попытками при 500 ошибке.
-       Сначала ищет точное совпадение mi.number, затем по подстроке.
-       Возвращает список docs или {"error": ...}."""
-    session = get_arshin_session()
+def _do_request(mi_number, params, label):
+    """Выполнить запрос к API с 3 попытками при 500."""
     headers = {"Referer": "https://fgis.gost.ru/fundmetrology/cm/results"}
+    session = get_arshin_session()
 
-    # Этап 1: точное совпадение mi.number
-    params_exact = {
+    for attempt in range(1, 4):
+        try:
+            resp = session.get(ARSHIN_URL, params=params, headers=headers, timeout=60)
+            print(f"[API] {mi_number}: {label}, попытка {attempt}, статус {resp.status_code}")
+            resp.raise_for_status()
+            data = resp.json()
+            docs = data.get("response", {}).get("docs", [])
+            print(f"[API] {mi_number}: {label}: найдено {len(docs)} документов")
+            return docs
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else 0
+            if status == 500 and attempt < 3:
+                print(f"[API] {mi_number}: {label}: 500, пауза 5с, попытка {attempt+1}/3")
+                time.sleep(5)
+                continue
+            print(f"[API] {mi_number}: {label}: HTTP ошибка {status}")
+            return {"error": str(e)}
+        except requests.exceptions.RequestException as e:
+            print(f"[API] {mi_number}: {label}: ошибка {e}")
+            if attempt < 3:
+                time.sleep(5)
+                continue
+            return {"error": str(e)}
+
+    return {"error": "3 попытки не удались"}
+
+
+def search_arshin_exact(mi_number):
+    """Точное совпадение mi.number. 3 попытки при 500."""
+    params = {
         "fq": [f'mi.number:"{mi_number}"'],
         "q": "*",
         "fl": ",".join(FIELDS),
@@ -82,35 +108,12 @@ def search_arshin(mi_number):
         "rows": 1000,
         "start": 0,
     }
+    return _do_request(mi_number, params, "точный")
 
-    for attempt in range(1, 4):
-        try:
-            resp = session.get(ARSHIN_URL, params=params_exact, headers=headers, timeout=60)
-            print(f"[API] {mi_number}: точный поиск, попытка {attempt}, статус {resp.status_code}")
-            resp.raise_for_status()
-            data = resp.json()
-            docs = data.get("response", {}).get("docs", [])
-            print(f"[API] {mi_number}: точный поиск: найдено {len(docs)} документов")
-            if docs:
-                return docs
-            break  # 200, но пусто — выходим из retry
-        except requests.exceptions.HTTPError as e:
-            status = e.response.status_code if e.response is not None else 0
-            if status == 500 and attempt < 3:
-                print(f"[API] {mi_number}: 500, пауза 5с, попытка {attempt+1}/3")
-                time.sleep(5)
-                continue
-            print(f"[API] {mi_number}: HTTP ошибка {status}")
-            return {"error": str(e)}
-        except requests.exceptions.RequestException as e:
-            print(f"[API] {mi_number}: ошибка {e}")
-            if attempt < 3:
-                time.sleep(5)
-                continue
-            return {"error": str(e)}
 
-    # Этап 2: поиск по подстроке mi.number
-    params_substr = {
+def search_arshin_substr(mi_number):
+    """Поиск по подстроке mi.number:*номер*. 3 попытки при 500."""
+    params = {
         "fq": [f"mi.number:*{mi_number}*"],
         "q": "*",
         "fl": ",".join(FIELDS),
@@ -118,32 +121,7 @@ def search_arshin(mi_number):
         "rows": 1000,
         "start": 0,
     }
-
-    for attempt in range(1, 4):
-        try:
-            resp = session.get(ARSHIN_URL, params=params_substr, headers=headers, timeout=60)
-            print(f"[API] {mi_number}: поиск по подстроке, попытка {attempt}, статус {resp.status_code}")
-            resp.raise_for_status()
-            data = resp.json()
-            docs = data.get("response", {}).get("docs", [])
-            print(f"[API] {mi_number}: поиск по подстроке: найдено {len(docs)} документов")
-            return docs
-        except requests.exceptions.HTTPError as e:
-            status = e.response.status_code if e.response is not None else 0
-            if status == 500 and attempt < 3:
-                print(f"[API] {mi_number}: 500, пауза 5с, попытка {attempt+1}/3")
-                time.sleep(5)
-                continue
-            print(f"[API] {mi_number}: HTTP ошибка {status}")
-            return {"error": str(e)}
-        except requests.exceptions.RequestException as e:
-            print(f"[API] {mi_number}: ошибка {e}")
-            if attempt < 3:
-                time.sleep(5)
-                continue
-            return {"error": str(e)}
-
-    return {"error": "3 попытки не удались"}
+    return _do_request(mi_number, params, "подстрока")
 
 
 def format_date(date_str):
@@ -255,7 +233,8 @@ def index():
                 num = item["number"]
                 mi_type = item["type"] if item["type"] else ""
 
-                docs = search_arshin(num)
+                # Этап 1: точное совпадение mi.number
+                docs = search_arshin_exact(num)
 
                 # Если ошибка — остаётся для следующей итерации
                 if isinstance(docs, dict) and "error" in docs:
@@ -263,6 +242,16 @@ def index():
                     if idx < len(pending) - 1:
                         time.sleep(delay)
                     continue
+
+                # Если точное совпадение не дало результатов — пробуем по подстроке
+                if not docs:
+                    print(f"[App] {num}: точное совпадение не найдено, пробуем по подстроке")
+                    docs = search_arshin_substr(num)
+                    if isinstance(docs, dict) and "error" in docs:
+                        still_pending.append(item)
+                        if idx < len(pending) - 1:
+                            time.sleep(delay)
+                        continue
 
                 # Если ничего не найдено — остаётся на следующую итерацию
                 if not docs:
