@@ -1,10 +1,11 @@
 import os
 import time
 import threading
+import uuid
 import requests
 import openpyxl
 from io import BytesIO
-from flask import Flask, render_template, request, send_file
+from flask import Flask, render_template, request, send_file, redirect, url_for
 
 app = Flask(__name__)
 
@@ -31,6 +32,10 @@ FIELDS = [
 # Сессия для запросов к Аршину (с cookies)
 _session = None
 _session_lock = threading.Lock()
+
+# Хранилище прогресса задач
+progress_store = {}
+progress_lock = threading.Lock()
 
 
 def get_arshin_session():
@@ -154,6 +159,84 @@ def process_docs(docs, num, mi_type):
     return records
 
 
+def process_items_background(task_id, rows_data):
+    """Фоновая обработка всех номеров с обновлением прогресса."""
+    delays = [3, 7, 12, 18, 25]
+    pending = list(rows_data)
+    results = []
+    errors_list = []
+
+    for iteration, delay in enumerate(delays, 1):
+        if not pending:
+            break
+
+        print(f"\n[App] === Итерация {iteration}, пауза {delay}с, осталось {len(pending)} номеров ===")
+
+        found_this_iter = []
+        still_pending = []
+
+        for idx, item in enumerate(pending):
+            num = item["number"]
+            mi_type = item["type"] if item["type"] else ""
+
+            docs = search_arshin(num, mi_type if mi_type else None)
+
+            if isinstance(docs, dict) and "error" in docs:
+                still_pending.append(item)
+                with progress_lock:
+                    progress_store[task_id]["errors"] += 1
+                if idx < len(pending) - 1:
+                    time.sleep(delay)
+                continue
+
+            if not docs:
+                still_pending.append(item)
+                with progress_lock:
+                    progress_store[task_id]["not_found"] += 1
+                if idx < len(pending) - 1:
+                    time.sleep(delay)
+                continue
+
+            records = process_docs(docs, num, mi_type)
+            found_this_iter.extend(records)
+
+            with progress_lock:
+                progress_store[task_id]["processed"] += 1
+
+            if idx < len(pending) - 1:
+                time.sleep(delay)
+
+        results.extend(found_this_iter)
+        pending = still_pending
+
+    # Оставшиеся не найденными — добавляем как "Не найдено"
+    for item in pending:
+        results.append({
+            "number": item["number"],
+            "input_type": item["type"] if item["type"] else "",
+            "mi_number": "",
+            "title": "Не найдено",
+            "type": "",
+            "modification": "",
+            "verification_date": "",
+            "valid_date": "",
+            "applicability": "",
+            "org_title": "",
+            "result_docnum": "",
+        })
+
+    # Сортируем результаты в порядке исходных номеров
+    order = {item["number"]: idx for idx, item in enumerate(rows_data)}
+    results.sort(key=lambda r: order.get(r["number"], 999))
+
+    with progress_lock:
+        progress_store[task_id]["status"] = "complete"
+        progress_store[task_id]["results"] = results
+        progress_store[task_id]["errors_list"] = errors_list
+        progress_store[task_id]["not_found_count"] = sum(1 for r in results if r["title"] == "Не найдено")
+        progress_store[task_id]["rows_data"] = rows_data
+
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
@@ -181,90 +264,76 @@ def index():
         if not rows_data:
             return render_template("index.html", error="Нет номеров в первом столбце")
 
-        # Итеративный поиск: паузы 3, 7, 12, 18, 25 сек
-        delays = [3, 7, 12, 18, 25]
-        pending = list(rows_data)
-        results = []
-        errors = []
+        # Создаём задачу и запускаем фоновую обработку
+        task_id = str(uuid.uuid4())
+        with progress_lock:
+            progress_store[task_id] = {
+                "total": len(rows_data),
+                "processed": 0,
+                "errors": 0,
+                "not_found": 0,
+                "status": "running",
+                "results": [],
+                "errors_list": [],
+                "rows_data": rows_data,
+                "not_found_count": 0,
+            }
 
-        for iteration, delay in enumerate(delays, 1):
-            if not pending:
-                print(f"[App] Все номера найдены, досрочное завершение")
-                break
+        thread = threading.Thread(target=process_items_background, args=(task_id, rows_data))
+        thread.daemon = True
+        thread.start()
 
-            print(f"\n[App] === Итерация {iteration}, пауза {delay}с, осталось {len(pending)} номеров ===")
-
-            found_this_iter = []
-            still_pending = []
-
-            for idx, item in enumerate(pending):
-                num = item["number"]
-                mi_type = item["type"] if item["type"] else ""
-
-                # Поиск по подстроке mi.number + mi.modification (если задан тип)
-                docs = search_arshin(num, mi_type if mi_type else None)
-
-                # Если ошибка — остаётся для следующей итерации
-                if isinstance(docs, dict) and "error" in docs:
-                    still_pending.append(item)
-                    if idx < len(pending) - 1:
-                        time.sleep(delay)
-                    continue
-
-                # Если ничего не найдено — остаётся на следующую итерацию
-                if not docs:
-                    print(f"[App] {num}: не найден, остаётся для следующей итерации")
-                    still_pending.append(item)
-                    if idx < len(pending) - 1:
-                        time.sleep(delay)
-                    continue
-
-                # Нашли! Обрабатываем результаты
-                records = process_docs(docs, num, mi_type)
-                found_this_iter.extend(records)
-
-                if idx < len(pending) - 1:
-                    time.sleep(delay)
-
-            results.extend(found_this_iter)
-            pending = still_pending
-            print(f"[App] Итерация {iteration}: найдено {len(found_this_iter)} записей, осталось {len(pending)} номеров")
-
-        # Оставшиеся не найденными — добавляем как "Не найдено"
-        for item in pending:
-            results.append({
-                "number": item["number"],
-                "input_type": item["type"] if item["type"] else "",
-                "mi_number": "",
-                "title": "Не найдено",
-                "type": "",
-                "modification": "",
-                "verification_date": "",
-                "valid_date": "",
-                "applicability": "",
-                "org_title": "",
-                "result_docnum": "",
-            })
-
-        # Сортируем результаты в порядке исходных номеров
-        order = {item["number"]: idx for idx, item in enumerate(rows_data)}
-        results.sort(key=lambda r: order.get(r["number"], 999))
-
-        not_found_count = sum(1 for r in results if r["title"] == "Не найдено")
-
-        # Пагинация: по 50 записей на страницу
-        per_page = 50
-        total_pages = max(1, (len(results) + per_page - 1) // per_page)
-        page_results = results[:per_page]
-
-        return render_template(
-            "result.html", results=page_results, errors=errors, total=len(rows_data),
-            not_found_count=not_found_count,
-            page=1, total_pages=total_pages, per_page=per_page,
-            all_results=results, total_records=len(results)
-        )
+        return redirect(url_for("progress_page", task_id=task_id))
 
     return render_template("index.html")
+
+
+@app.route("/progress/<task_id>")
+def progress_page(task_id):
+    with progress_lock:
+        if task_id not in progress_store:
+            return redirect(url_for("index"))
+    return render_template("progress.html", task_id=task_id)
+
+
+@app.route("/progress_data/<task_id>")
+def progress_data(task_id):
+    with progress_lock:
+        data = progress_store.get(task_id)
+        if not data:
+            return {"status": "error", "message": "Задача не найдена"}
+        return {
+            "total": data["total"],
+            "processed": data["processed"],
+            "errors": data["errors"],
+            "not_found": data["not_found"],
+            "status": data["status"],
+        }
+
+
+@app.route("/results/<task_id>")
+def results_page(task_id):
+    with progress_lock:
+        data = progress_store.get(task_id)
+        if not data or data["status"] != "complete":
+            return redirect(url_for("progress_page", task_id=task_id))
+
+        results = data["results"]
+        rows_data = data["rows_data"]
+        errors = data["errors_list"]
+        not_found_count = data["not_found_count"]
+
+    # Пагинация: по 50 записей на страницу
+    per_page = 50
+    total_pages = max(1, (len(results) + per_page - 1) // per_page)
+    page_results = results[:per_page]
+
+    return render_template(
+        "result.html", results=page_results, errors=errors, total=len(rows_data),
+        not_found_count=not_found_count,
+        page=1, total_pages=total_pages, per_page=per_page,
+        all_results=results, total_records=len(results)
+    )
 
 
 @app.route("/page/", methods=["POST"])
