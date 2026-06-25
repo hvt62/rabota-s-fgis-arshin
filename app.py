@@ -226,6 +226,9 @@ def process_items_background(task_id, rows_data):
             with progress_lock:
                 progress_store[task_id]["results"].extend(records)
                 progress_store[task_id]["processed"] += 1
+                # Удаляем найденный номер из pending_items
+                pending_items = progress_store[task_id].get("pending_items", [])
+                progress_store[task_id]["pending_items"] = [pi for pi in pending_items if pi["number"] != num]
 
             if idx < len(pending) - 1:
                 if cancellable_sleep(task_id, delay):
