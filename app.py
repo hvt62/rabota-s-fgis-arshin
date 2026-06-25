@@ -181,8 +181,8 @@ def index():
         if not rows_data:
             return render_template("index.html", error="Нет номеров в первом столбце")
 
-        # Итеративный поиск: паузы 3, 7, 12, 18, 25, ... 55 сек
-        delays = [3, 7, 12, 18, 25, 30, 35, 40, 45, 50, 55]
+        # Итеративный поиск: паузы 3, 7, 12, 18, 25 сек
+        delays = [3, 7, 12, 18, 25]
         pending = list(rows_data)
         results = []
         errors = []
