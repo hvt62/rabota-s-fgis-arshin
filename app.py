@@ -98,24 +98,9 @@ def _do_request(mi_number, params, label):
     return {"error": "3 попытки не удались"}
 
 
-def search_arshin_exact(mi_number, mi_type=None):
-    """Точное совпадение mi.number. 3 попытки при 500."""
-    fq = [f'mi.number:"{mi_number}"']
-    if mi_type:
-        fq.append(f"mi.modification:*{mi_type}*")
-    params = {
-        "fq": fq,
-        "q": "*",
-        "fl": ",".join(FIELDS),
-        "sort": "verification_date desc,org_title asc",
-        "rows": 1000,
-        "start": 0,
-    }
-    return _do_request(mi_number, params, "точный")
-
-
-def search_arshin_substr(mi_number, mi_type=None):
-    """Поиск по подстроке mi.number:*номер*. 3 попытки при 500."""
+def search_arshin(mi_number, mi_type=None):
+    """Поиск по подстроке mi.number:*номер* + mi.modification:*тип* (если задан).
+       3 попытки при 500 ошибке."""
     fq = [f"mi.number:*{mi_number}*"]
     if mi_type:
         fq.append(f"mi.modification:*{mi_type}*")
@@ -127,7 +112,7 @@ def search_arshin_substr(mi_number, mi_type=None):
         "rows": 1000,
         "start": 0,
     }
-    return _do_request(mi_number, params, "подстрока")
+    return _do_request(mi_number, params, "поиск")
 
 
 def format_date(date_str):
@@ -145,32 +130,12 @@ def format_applicability(val):
 
 
 def process_docs(docs, num, mi_type):
-    """Обработать список документов: локальная фильтрация по типу, форматирование."""
+    """Обработать список документов: форматирование без локальной фильтрации."""
     if not docs:
         return []
 
-    # Локальная фильтрация по типу (LIKE, без учёта регистра)
-    if mi_type:
-        mi_type_lower = mi_type.lower()
-        filtered_docs = [
-            doc for doc in docs
-            if mi_type_lower in doc.get("mi.mitype", "").lower()
-        ]
-        print(f"[App] {num}: после локальной фильтрации по типу '{mi_type}': {len(filtered_docs)} из {len(docs)} записей")
-
-        if not filtered_docs:
-            print(f"[App] {num}: тип '{mi_type}' не совпал локально, показываем все записи без фильтра")
-            docs_to_use = docs
-            type_mismatch = True
-        else:
-            docs_to_use = filtered_docs
-            type_mismatch = False
-    else:
-        docs_to_use = docs
-        type_mismatch = False
-
     records = []
-    for doc in docs_to_use:
+    for doc in docs:
         record = {
             "number": num,
             "input_type": mi_type,
@@ -184,9 +149,6 @@ def process_docs(docs, num, mi_type):
             "org_title": doc.get("org_title", ""),
             "result_docnum": doc.get("result_docnum", ""),
         }
-        if type_mismatch:
-            record["type_mismatch"] = True
-            record["title"] = f"⚠️ {record['title']} (тип не совпал)"
         records.append(record)
 
     return records
@@ -239,8 +201,8 @@ def index():
                 num = item["number"]
                 mi_type = item["type"] if item["type"] else ""
 
-                # Этап 1: точное совпадение mi.number (с фильтром по модификации, если задан тип)
-                docs = search_arshin_exact(num, mi_type if mi_type else None)
+                # Поиск по подстроке mi.number + mi.modification (если задан тип)
+                docs = search_arshin(num, mi_type if mi_type else None)
 
                 # Если ошибка — остаётся для следующей итерации
                 if isinstance(docs, dict) and "error" in docs:
@@ -248,16 +210,6 @@ def index():
                     if idx < len(pending) - 1:
                         time.sleep(delay)
                     continue
-
-                # Если точное совпадение не дало результатов — пробуем по подстроке
-                if not docs:
-                    print(f"[App] {num}: точное совпадение не найдено, пробуем по подстроке")
-                    docs = search_arshin_substr(num, mi_type if mi_type else None)
-                    if isinstance(docs, dict) and "error" in docs:
-                        still_pending.append(item)
-                        if idx < len(pending) - 1:
-                            time.sleep(delay)
-                        continue
 
                 # Если ничего не найдено — остаётся на следующую итерацию
                 if not docs:
