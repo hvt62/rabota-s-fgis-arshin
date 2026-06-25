@@ -396,6 +396,7 @@ def results_page(task_id):
         rows_data = data["rows_data"]
         errors = data["errors_list"]
         not_found_count = data["not_found_count"]
+        total_records = len(results) - not_found_count
 
     per_page = 50
     total_pages = max(1, (len(results) + per_page - 1) // per_page)
@@ -405,7 +406,7 @@ def results_page(task_id):
         "result.html", results=page_results, errors=errors, total=len(rows_data),
         not_found_count=not_found_count,
         page=1, total_pages=total_pages, per_page=per_page,
-        all_results=results, total_records=len(results)
+        all_results=results, total_records=total_records
     )
 
 
