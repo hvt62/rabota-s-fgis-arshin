@@ -9,6 +9,8 @@ from flask import Flask, render_template, request, send_file, redirect, url_for
 
 app = Flask(__name__)
 
+VERSION = "1.0.0"
+
 # Новый рабочий endpoint ФГИС «Аршин»
 ARSHIN_URL = "https://fgis.gost.ru/fundmetrology/cm/xcdb/vri/select"
 ARSHIN_MAIN = "https://fgis.gost.ru/fundmetrology/cm/"
@@ -315,7 +317,7 @@ def progress_page(task_id):
     with progress_lock:
         if task_id not in progress_store:
             return redirect(url_for("index"))
-    return render_template("progress.html", task_id=task_id)
+    return render_template("progress.html", task_id=task_id, version=VERSION)
 
 
 @app.route("/progress_data/<task_id>")
