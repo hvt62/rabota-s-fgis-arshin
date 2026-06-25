@@ -98,10 +98,13 @@ def _do_request(mi_number, params, label):
     return {"error": "3 попытки не удались"}
 
 
-def search_arshin_exact(mi_number):
+def search_arshin_exact(mi_number, mi_type=None):
     """Точное совпадение mi.number. 3 попытки при 500."""
+    fq = [f'mi.number:"{mi_number}"']
+    if mi_type:
+        fq.append(f"mi.modification:*{mi_type}*")
     params = {
-        "fq": [f'mi.number:"{mi_number}"'],
+        "fq": fq,
         "q": "*",
         "fl": ",".join(FIELDS),
         "sort": "verification_date desc,org_title asc",
@@ -111,10 +114,13 @@ def search_arshin_exact(mi_number):
     return _do_request(mi_number, params, "точный")
 
 
-def search_arshin_substr(mi_number):
+def search_arshin_substr(mi_number, mi_type=None):
     """Поиск по подстроке mi.number:*номер*. 3 попытки при 500."""
+    fq = [f"mi.number:*{mi_number}*"]
+    if mi_type:
+        fq.append(f"mi.modification:*{mi_type}*")
     params = {
-        "fq": [f"mi.number:*{mi_number}*"],
+        "fq": fq,
         "q": "*",
         "fl": ",".join(FIELDS),
         "sort": "verification_date desc,org_title asc",
@@ -233,8 +239,8 @@ def index():
                 num = item["number"]
                 mi_type = item["type"] if item["type"] else ""
 
-                # Этап 1: точное совпадение mi.number
-                docs = search_arshin_exact(num)
+                # Этап 1: точное совпадение mi.number (с фильтром по модификации, если задан тип)
+                docs = search_arshin_exact(num, mi_type if mi_type else None)
 
                 # Если ошибка — остаётся для следующей итерации
                 if isinstance(docs, dict) and "error" in docs:
@@ -246,7 +252,7 @@ def index():
                 # Если точное совпадение не дало результатов — пробуем по подстроке
                 if not docs:
                     print(f"[App] {num}: точное совпадение не найдено, пробуем по подстроке")
-                    docs = search_arshin_substr(num)
+                    docs = search_arshin_substr(num, mi_type if mi_type else None)
                     if isinstance(docs, dict) and "error" in docs:
                         still_pending.append(item)
                         if idx < len(pending) - 1:
