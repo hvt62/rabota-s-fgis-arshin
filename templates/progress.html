@@ -151,7 +151,6 @@
     <script>
         const taskId = '{{ task_id }}';
         const pollInterval = 10000;
-        let startTime = null;
 
         function formatTime(seconds) {
             const m = Math.floor(seconds / 60);
@@ -181,7 +180,7 @@
                         setTimeout(updateProgress, pollInterval);
                     } else if (data.status === 'complete') {
                         document.getElementById('statusText').textContent = '✅ Обработка завершена!';
-                        document.getElementById('stopBtn').classList.add('hidden');
+                        document.getElementById('actionsBlock').classList.add('hidden');
                         document.getElementById('completeBlock').classList.remove('hidden');
                         document.getElementById('resultsLink').href = '/results/' + taskId;
                     }
@@ -202,7 +201,6 @@
                 .then(data => {
                     if (data.status === 'ok') {
                         document.getElementById('statusText').textContent = '⏹ Остановка обработки...';
-                        // Уменьшаем интервал, чтобы быстрее увидеть завершение
                         setTimeout(updateProgress, 2000);
                     }
                 });
