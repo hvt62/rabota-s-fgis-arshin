@@ -85,21 +85,11 @@
             border: none;
             font-weight: 600;
         }
-        .btn-primary {
-            background: #1976d2;
-            color: white;
-        }
-        .btn-primary:hover { background: #1565c0; }
         .btn-danger {
             background: #d32f2f;
             color: white;
         }
         .btn-danger:hover { background: #c62828; }
-        .btn-secondary {
-            background: #e8e8e8;
-            color: #333;
-        }
-        .btn-secondary:hover { background: #d0d0d0; }
         .actions {
             display: flex;
             gap: 12px;
@@ -145,13 +135,6 @@
         <div class="actions" id="actionsBlock">
             <button class="btn btn-danger" id="stopBtn" onclick="stopTask()">⏹ Остановить</button>
         </div>
-
-        <div id="completeBlock" style="display:none; text-align:center;">
-            <div class="actions">
-                <a class="btn btn-primary" id="resultsLink" href="#">📊 Показать результаты</a>
-                <a href="/" class="btn btn-secondary">← Новый поиск</a>
-            </div>
-        </div>
     </div>
 
     <script>
@@ -185,10 +168,7 @@
                             `Найдено ${data.processed} из ${data.total} записей...`;
                         setTimeout(updateProgress, pollInterval);
                     } else if (data.status === 'complete') {
-                        document.getElementById('statusText').textContent = '✅ Обработка завершена!';
-                        document.getElementById('actionsBlock').style.display = 'none';
-                        document.getElementById('completeBlock').style.display = '';
-                        document.getElementById('resultsLink').href = '/results/' + taskId;
+                        window.location.href = '/results/' + taskId;
                     }
                 })
                 .catch(() => {
@@ -217,10 +197,7 @@
                 .then(r => r.json())
                 .then(data => {
                     if (data.status === 'complete') {
-                        document.getElementById('statusText').textContent = '✅ Обработка завершена!';
-                        document.getElementById('actionsBlock').style.display = 'none';
-                        document.getElementById('completeBlock').style.display = '';
-                        document.getElementById('resultsLink').href = '/results/' + taskId;
+                        window.location.href = '/results/' + taskId;
                     } else {
                         setTimeout(waitForComplete, 2000);
                     }
