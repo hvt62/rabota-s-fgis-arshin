@@ -75,7 +75,6 @@
             color: #999;
             margin-bottom: 20px;
         }
-        .hidden { display: none; }
         .btn {
             display: inline-block;
             padding: 12px 24px;
@@ -147,7 +146,7 @@
             <button class="btn btn-danger" id="stopBtn" onclick="stopTask()">⏹ Остановить</button>
         </div>
 
-        <div id="completeBlock" class="hidden" style="text-align:center;">
+        <div id="completeBlock" style="display:none; text-align:center;">
             <div class="actions">
                 <a class="btn btn-primary" id="resultsLink" href="#">📊 Показать результаты</a>
                 <a href="/" class="btn btn-secondary">← Новый поиск</a>
@@ -187,8 +186,8 @@
                         setTimeout(updateProgress, pollInterval);
                     } else if (data.status === 'complete') {
                         document.getElementById('statusText').textContent = '✅ Обработка завершена!';
-                        document.getElementById('actionsBlock').classList.add('hidden');
-                        document.getElementById('completeBlock').classList.remove('hidden');
+                        document.getElementById('actionsBlock').style.display = 'none';
+                        document.getElementById('completeBlock').style.display = '';
                         document.getElementById('resultsLink').href = '/results/' + taskId;
                     }
                 })
