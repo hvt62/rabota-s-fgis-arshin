@@ -48,6 +48,7 @@
         .stat-value.error { color: #d32f2f; }
         .stat-value.not-found { color: #f57c00; }
         .stat-value.success { color: #388e3c; }
+        .stat-value.time { color: #7b1fa2; }
         .progress-bar {
             height: 8px;
             background: #e0e0e0;
@@ -66,19 +67,40 @@
             text-align: center;
             color: #666;
             font-size: 14px;
+            margin-bottom: 20px;
         }
         .hidden { display: none; }
         .btn {
             display: inline-block;
-            background: #1976d2;
-            color: white;
             padding: 12px 24px;
             border-radius: 8px;
             text-decoration: none;
             font-size: 16px;
-            margin-top: 20px;
+            cursor: pointer;
+            border: none;
+            font-weight: 600;
         }
-        .btn:hover { background: #1565c0; }
+        .btn-primary {
+            background: #1976d2;
+            color: white;
+        }
+        .btn-primary:hover { background: #1565c0; }
+        .btn-danger {
+            background: #d32f2f;
+            color: white;
+        }
+        .btn-danger:hover { background: #c62828; }
+        .btn-secondary {
+            background: #e8e8e8;
+            color: #333;
+        }
+        .btn-secondary:hover { background: #d0d0d0; }
+        .actions {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
     </style>
 </head>
 <body>
@@ -102,6 +124,10 @@
                 <div class="stat-value not-found" id="not_found">0</div>
                 <div class="stat-label">Не найдено (200, 0 док.)</div>
             </div>
+            <div class="stat" style="grid-column: 1 / -1;">
+                <div class="stat-value time" id="elapsed">0:00</div>
+                <div class="stat-label">Время обработки</div>
+            </div>
         </div>
 
         <div class="progress-bar">
@@ -110,14 +136,28 @@
 
         <div class="status-text" id="statusText">Запуск обработки...</div>
 
+        <div class="actions" id="actionsBlock">
+            <button class="btn btn-danger" id="stopBtn" onclick="stopTask()">⏹ Остановить</button>
+        </div>
+
         <div id="completeBlock" class="hidden" style="text-align:center;">
-            <a class="btn" id="resultsLink" href="#">📊 Показать результаты</a>
+            <div class="actions">
+                <a class="btn btn-primary" id="resultsLink" href="#">📊 Показать результаты</a>
+                <a href="/" class="btn btn-secondary">← Новый поиск</a>
+            </div>
         </div>
     </div>
 
     <script>
         const taskId = '{{ task_id }}';
         const pollInterval = 10000;
+        let startTime = null;
+
+        function formatTime(seconds) {
+            const m = Math.floor(seconds / 60);
+            const s = seconds % 60;
+            return m + ':' + (s < 10 ? '0' : '') + s;
+        }
 
         function updateProgress() {
             fetch('/progress_data/' + taskId)
@@ -128,6 +168,10 @@
                     document.getElementById('errors').textContent = data.errors;
                     document.getElementById('not_found').textContent = data.not_found;
 
+                    if (data.elapsed !== undefined) {
+                        document.getElementById('elapsed').textContent = formatTime(data.elapsed);
+                    }
+
                     const pct = data.total > 0 ? Math.round((data.processed / data.total) * 100) : 0;
                     document.getElementById('progressFill').style.width = pct + '%';
 
@@ -137,12 +181,30 @@
                         setTimeout(updateProgress, pollInterval);
                     } else if (data.status === 'complete') {
                         document.getElementById('statusText').textContent = '✅ Обработка завершена!';
+                        document.getElementById('stopBtn').classList.add('hidden');
                         document.getElementById('completeBlock').classList.remove('hidden');
                         document.getElementById('resultsLink').href = '/results/' + taskId;
                     }
                 })
                 .catch(() => {
                     setTimeout(updateProgress, pollInterval);
+                });
+        }
+
+        function stopTask() {
+            if (!confirm('Остановить обработку? Будут показаны результаты по уже обработанным номерам.')) return;
+
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('stopBtn').textContent = '⏹ Остановка...';
+
+            fetch('/cancel_task/' + taskId, { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'ok') {
+                        document.getElementById('statusText').textContent = '⏹ Остановка обработки...';
+                        // Уменьшаем интервал, чтобы быстрее увидеть завершение
+                        setTimeout(updateProgress, 2000);
+                    }
                 });
         }
 

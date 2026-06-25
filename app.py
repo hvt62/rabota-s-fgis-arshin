@@ -159,12 +159,46 @@ def process_docs(docs, num, mi_type):
     return records
 
 
+def finalize_results(task_id, rows_data, results, errors_list):
+    """Финализировать результаты: добавить не найденные, отсортировать."""
+    with progress_lock:
+        pending = progress_store[task_id].get("pending_items", [])
+
+    for item in pending:
+        results.append({
+            "number": item["number"],
+            "input_type": item["type"] if item["type"] else "",
+            "mi_number": "",
+            "title": "Не найдено",
+            "type": "",
+            "modification": "",
+            "verification_date": "",
+            "valid_date": "",
+            "applicability": "",
+            "org_title": "",
+            "result_docnum": "",
+        })
+
+    order = {item["number"]: idx for idx, item in enumerate(rows_data)}
+    results.sort(key=lambda r: order.get(r["number"], 999))
+
+    with progress_lock:
+        progress_store[task_id]["status"] = "complete"
+        progress_store[task_id]["results"] = results
+        progress_store[task_id]["errors_list"] = errors_list
+        progress_store[task_id]["not_found_count"] = sum(1 for r in results if r["title"] == "Не найдено")
+        progress_store[task_id]["rows_data"] = rows_data
+
+
 def process_items_background(task_id, rows_data):
     """Фоновая обработка всех номеров с обновлением прогресса."""
     delays = [3, 7, 12, 18, 25]
     pending = list(rows_data)
     results = []
     errors_list = []
+
+    with progress_lock:
+        progress_store[task_id]["pending_items"] = pending
 
     for iteration, delay in enumerate(delays, 1):
         if not pending:
@@ -176,6 +210,13 @@ def process_items_background(task_id, rows_data):
         still_pending = []
 
         for idx, item in enumerate(pending):
+            # Проверка отмены
+            with progress_lock:
+                if progress_store[task_id].get("cancel"):
+                    print(f"[App] {task_id}: получен сигнал отмены")
+                    finalize_results(task_id, rows_data, results, errors_list)
+                    return
+
             num = item["number"]
             mi_type = item["type"] if item["type"] else ""
 
@@ -209,32 +250,10 @@ def process_items_background(task_id, rows_data):
         results.extend(found_this_iter)
         pending = still_pending
 
-    # Оставшиеся не найденными — добавляем как "Не найдено"
-    for item in pending:
-        results.append({
-            "number": item["number"],
-            "input_type": item["type"] if item["type"] else "",
-            "mi_number": "",
-            "title": "Не найдено",
-            "type": "",
-            "modification": "",
-            "verification_date": "",
-            "valid_date": "",
-            "applicability": "",
-            "org_title": "",
-            "result_docnum": "",
-        })
+        with progress_lock:
+            progress_store[task_id]["pending_items"] = pending
 
-    # Сортируем результаты в порядке исходных номеров
-    order = {item["number"]: idx for idx, item in enumerate(rows_data)}
-    results.sort(key=lambda r: order.get(r["number"], 999))
-
-    with progress_lock:
-        progress_store[task_id]["status"] = "complete"
-        progress_store[task_id]["results"] = results
-        progress_store[task_id]["errors_list"] = errors_list
-        progress_store[task_id]["not_found_count"] = sum(1 for r in results if r["title"] == "Не найдено")
-        progress_store[task_id]["rows_data"] = rows_data
+    finalize_results(task_id, rows_data, results, errors_list)
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -273,10 +292,13 @@ def index():
                 "errors": 0,
                 "not_found": 0,
                 "status": "running",
+                "cancel": False,
+                "start_time": time.time(),
                 "results": [],
                 "errors_list": [],
                 "rows_data": rows_data,
                 "not_found_count": 0,
+                "pending_items": [],
             }
 
         thread = threading.Thread(target=process_items_background, args=(task_id, rows_data))
@@ -302,13 +324,25 @@ def progress_data(task_id):
         data = progress_store.get(task_id)
         if not data:
             return {"status": "error", "message": "Задача не найдена"}
+        elapsed = time.time() - data["start_time"]
         return {
             "total": data["total"],
             "processed": data["processed"],
             "errors": data["errors"],
             "not_found": data["not_found"],
             "status": data["status"],
+            "elapsed": round(elapsed),
         }
+
+
+@app.route("/cancel_task/<task_id>", methods=["POST"])
+def cancel_task(task_id):
+    with progress_lock:
+        data = progress_store.get(task_id)
+        if not data or data["status"] != "running":
+            return {"status": "error", "message": "Задача не найдена или уже завершена"}
+        data["cancel"] = True
+    return {"status": "ok"}
 
 
 @app.route("/results/<task_id>")
