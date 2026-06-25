@@ -83,15 +83,15 @@ def _do_request(mi_number, params, label):
         except requests.exceptions.HTTPError as e:
             status = e.response.status_code if e.response is not None else 0
             if status == 500 and attempt < 3:
-                print(f"[API] {mi_number}: {label}: 500, пауза 5с, попытка {attempt+1}/3")
-                time.sleep(5)
+                print(f"[API] {mi_number}: {label}: 500, пауза 7.5с, попытка {attempt+1}/3")
+                time.sleep(7.5)
                 continue
             print(f"[API] {mi_number}: {label}: HTTP ошибка {status}")
             return {"error": str(e)}
         except requests.exceptions.RequestException as e:
             print(f"[API] {mi_number}: {label}: ошибка {e}")
             if attempt < 3:
-                time.sleep(5)
+                time.sleep(7.5)
                 continue
             return {"error": str(e)}
 
