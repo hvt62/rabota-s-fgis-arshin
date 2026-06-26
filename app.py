@@ -226,7 +226,6 @@ def process_items_background(task_id, rows_data):
             with progress_lock:
                 progress_store[task_id]["results"].extend(records)
                 progress_store[task_id]["processed"] += 1
-                # Удаляем найденный номер из pending_items
                 pending_items = progress_store[task_id].get("pending_items", [])
                 progress_store[task_id]["pending_items"] = [pi for pi in pending_items if pi["number"] != num]
 
@@ -239,7 +238,6 @@ def process_items_background(task_id, rows_data):
         with progress_lock:
             progress_store[task_id]["pending_items"] = pending
 
-    # Финализируем: добавляем не найденные, сортируем
     with progress_lock:
         pending = progress_store[task_id].get("pending_items", [])
         results = progress_store[task_id]["results"]
@@ -406,15 +404,20 @@ def results_page(task_id):
         "result.html", results=page_results, errors=errors, total=len(rows_data),
         not_found_count=not_found_count,
         page=1, total_pages=total_pages, per_page=per_page,
-        all_results=results, total_records=total_records
+        all_results=results, total_records=total_records,
+        task_id=task_id
     )
 
 
-@app.route("/page/", methods=["POST"])
-def page():
-    import json
+@app.route("/page/<task_id>", methods=["POST"])
+def page(task_id):
+    with progress_lock:
+        data = progress_store.get(task_id)
+        if not data or data["status"] != "complete":
+            return redirect(url_for("index"))
 
-    results = json.loads(request.form.get("results", "[]"))
+        results = data["results"]
+
     page = int(request.form.get("page", 1))
     per_page = 50
     total_pages = max(1, (len(results) + per_page - 1) // per_page)
@@ -432,15 +435,19 @@ def page():
         "result.html", results=page_results, errors=[], total=0,
         not_found_count=0,
         page=page, total_pages=total_pages, per_page=per_page,
-        all_results=results, total_records=len(results)
+        all_results=results, total_records=len(results),
+        task_id=task_id
     )
 
 
-@app.route("/download/", methods=["POST"])
-def download():
-    import json
+@app.route("/download/<task_id>", methods=["POST"])
+def download(task_id):
+    with progress_lock:
+        data = progress_store.get(task_id)
+        if not data or data["status"] != "complete":
+            return {"status": "error", "message": "Результаты не найдены"}
 
-    results = json.loads(request.form.get("results", "[]"))
+        results = data["results"]
 
     wb = openpyxl.Workbook()
     ws = wb.active
