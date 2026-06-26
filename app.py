@@ -271,29 +271,45 @@ def process_items_background(task_id, rows_data):
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
-        file = request.files.get("file")
-        if not file or file.filename == "":
-            return render_template("index.html", error="Файл не выбран")
+        mode = request.form.get("mode", "file")
 
-        try:
-            wb = openpyxl.load_workbook(file, read_only=True)
-            ws = wb.active
-        except Exception as e:
-            return render_template("index.html", error=f"Ошибка чтения Excel: {e}")
+        # --- Ручной ввод ---
+        if mode == "manual":
+            manual_number = request.form.get("manual_number", "").strip()
+            if not manual_number:
+                return render_template("index.html", error="Введите номер СИ")
 
-        rows_data = []
-        for row in ws.iter_rows(min_row=2, max_col=2, values_only=True):
-            num = row[0]
-            if num is not None:
-                num = str(num).strip()
-                type_val = str(row[1]).strip() if row[1] is not None else ""
-                rows_data.append({"number": num, "type": type_val})
+            manual_type = request.form.get("manual_type", "").strip()
+            rows_data = [{"number": manual_number, "type": manual_type}]
 
-        print(f"[App] Прочитано строк: {len(rows_data)}")
+            print(f"[App] Ручной ввод: номер={manual_number}, тип={manual_type}")
 
-        if not rows_data:
-            return render_template("index.html", error="Нет номеров в первом столбце")
+        # --- Загрузка файла ---
+        else:
+            file = request.files.get("file")
+            if not file or file.filename == "":
+                return render_template("index.html", error="Файл не выбран")
 
+            try:
+                wb = openpyxl.load_workbook(file, read_only=True)
+                ws = wb.active
+            except Exception as e:
+                return render_template("index.html", error=f"Ошибка чтения Excel: {e}")
+
+            rows_data = []
+            for row in ws.iter_rows(min_row=2, max_col=2, values_only=True):
+                num = row[0]
+                if num is not None:
+                    num = str(num).strip()
+                    type_val = str(row[1]).strip() if row[1] is not None else ""
+                    rows_data.append({"number": num, "type": type_val})
+
+            print(f"[App] Прочитано строк: {len(rows_data)}")
+
+            if not rows_data:
+                return render_template("index.html", error="Нет номеров в первом столбце")
+
+        # --- Общий запуск задачи ---
         task_id = str(uuid.uuid4())
         with progress_lock:
             progress_store[task_id] = {
