@@ -331,6 +331,10 @@ def index():
         thread.daemon = True
         thread.start()
 
+        # Ручной ввод — сразу на страницу результатов (с ожиданием)
+        if mode == "manual":
+            return redirect(url_for("results_page", task_id=task_id))
+
         return redirect(url_for("progress_page", task_id=task_id))
 
     return render_template("index.html")
@@ -403,8 +407,15 @@ def cancel_task(task_id):
 def results_page(task_id):
     with progress_lock:
         data = progress_store.get(task_id)
-        if not data or data["status"] != "complete":
-            return redirect(url_for("progress_page", task_id=task_id))
+        if not data:
+            return redirect(url_for("index"))
+
+        # Если задача ещё выполняется — показываем страницу с ожиданием
+        if data["status"] != "complete":
+            return render_template("result.html", task_id=task_id, waiting=True,
+                                   total=0, total_records=0, not_found_count=0,
+                                   results=[], errors=[], page=1, total_pages=1,
+                                   per_page=50, all_results=[])
 
         results = data["results"]
         rows_data = data["rows_data"]
@@ -421,7 +432,7 @@ def results_page(task_id):
         not_found_count=not_found_count,
         page=1, total_pages=total_pages, per_page=per_page,
         all_results=results, total_records=total_records,
-        task_id=task_id
+        task_id=task_id, waiting=False
     )
 
 
@@ -452,7 +463,7 @@ def page(task_id):
         not_found_count=0,
         page=page, total_pages=total_pages, per_page=per_page,
         all_results=results, total_records=len(results),
-        task_id=task_id
+        task_id=task_id, waiting=False
     )
 
 
