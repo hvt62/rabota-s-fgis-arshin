@@ -3,131 +3,59 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Результаты поиска — ФГИС Аршин</title>
+    <title>Результаты поиска — ФГИС «Аршин»</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #f0f2f5;
+            min-height: 100vh;
             padding: 20px;
-            color: #333;
         }
         .container {
-            max-width: 1200px;
+            max-width: 1000px;
             margin: 0 auto;
         }
         .card {
-            background: #fff;
-            border-radius: 12px;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.1);
-            padding: 30px;
-            margin-bottom: 20px;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+            padding: 40px;
         }
         h1 {
-            font-size: 22px;
-            color: #1a1a2e;
-            margin-bottom: 20px;
+            font-size: 24px;
+            color: #1a1a1a;
+            margin-bottom: 8px;
         }
-        .summary {
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 24px;
+        }
+        .stats {
             display: flex;
             gap: 16px;
+            margin-bottom: 20px;
             flex-wrap: wrap;
-            margin-bottom: 16px;
         }
-        .summary-item {
+        .stat {
             background: #f8f9fa;
-            border-radius: 8px;
-            padding: 14px 20px;
-            text-align: center;
+            border-radius: 10px;
+            padding: 16px 20px;
             flex: 1;
             min-width: 120px;
         }
-        .summary-value {
-            font-size: 26px;
-            font-weight: bold;
-            color: #1976d2;
+        .stat-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: #4a90d9;
         }
-        .summary-value.success { color: #388e3c; }
-        .summary-value.warning { color: #f57c00; }
-        .summary-label {
+        .stat-label {
             font-size: 13px;
-            color: #666;
+            color: #888;
             margin-top: 4px;
         }
-        .table-wrap {
-            overflow-x: auto;
-            margin-bottom: 20px;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 13px;
-        }
-        th {
-            background: #f0f4ff;
-            color: #1a1a2e;
-            padding: 10px 8px;
-            text-align: left;
-            font-weight: 600;
-            border-bottom: 2px solid #d0d8f0;
-            white-space: nowrap;
-        }
-        td {
-            padding: 8px;
-            border-bottom: 1px solid #e8e8e8;
-            vertical-align: top;
-        }
-        tr:hover { background: #f8faff; }
-        .not-found td {
-            color: #999;
-            font-style: italic;
-        }
-        .not-found td:first-child {
-            color: #f57c00;
-            font-weight: 600;
-        }
-        .badge {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 600;
-        }
-        .badge-valid { background: #e8f5e9; color: #2e7d32; }
-        .badge-invalid { background: #ffebee; color: #c62828; }
-        .badge-unknown { background: #f5f5f5; color: #999; }
-        .pagination {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 12px;
-            margin-top: 20px;
-        }
-        .page-btn {
-            padding: 8px 16px;
-            border: 1px solid #d0d0d0;
-            border-radius: 6px;
-            background: #fff;
-            color: #333;
-            cursor: pointer;
-            font-size: 14px;
-            transition: all 0.2s;
-        }
-        .page-btn:hover:not(:disabled) {
-            background: #4a6cf7;
-            color: #fff;
-            border-color: #4a6cf7;
-        }
-        .page-btn:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
-        }
-        .page-info {
-            font-size: 14px;
-            color: #666;
-            font-weight: 500;
-        }
-        .actions {
+        .btn-group {
             display: flex;
             gap: 12px;
             flex-wrap: wrap;
@@ -136,108 +64,196 @@
         .btn {
             display: inline-flex;
             align-items: center;
-            gap: 6px;
-            padding: 10px 20px;
+            gap: 8px;
+            padding: 12px 24px;
             border-radius: 8px;
-            font-size: 14px;
+            font-size: 15px;
             font-weight: 600;
+            text-decoration: none;
             cursor: pointer;
             border: none;
-            text-decoration: none;
             transition: background 0.2s;
         }
         .btn-primary {
-            background: #4a6cf7;
-            color: #fff;
+            background: #4a90d9;
+            color: white;
         }
-        .btn-primary:hover { background: #3b5de7; }
+        .btn-primary:hover { background: #357abd; }
         .btn-secondary {
-            background: #f0f2f5;
+            background: #e8ecf0;
             color: #333;
         }
-        .btn-secondary:hover { background: #e0e2e5; }
-        .btn-success {
-            background: #388e3c;
-            color: #fff;
+        .btn-secondary:hover { background: #d5d9de; }
+        .table-wrap {
+            overflow-x: auto;
+            margin-top: 24px;
         }
-        .btn-success:hover { background: #2e7d32; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        th {
+            background: #f8f9fa;
+            text-align: left;
+            padding: 10px 12px;
+            font-weight: 600;
+            color: #555;
+            border-bottom: 2px solid #e0e0e0;
+            white-space: nowrap;
+        }
+        td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #eee;
+            color: #333;
+        }
+        tr:hover td { background: #f8f9fa; }
+        .not-found { color: #e74c3c; font-weight: 600; }
+        .found { color: #27ae60; font-weight: 600; }
+        .type-mismatch { color: #e67e22; font-weight: 600; }
         .empty-state {
             text-align: center;
             padding: 40px;
             color: #999;
         }
-        .empty-state h2 { font-size: 18px; margin-bottom: 8px; color: #666; }
+        /* Waiting state */
         .waiting {
             text-align: center;
-            padding: 60px 20px;
+            padding: 40px 20px;
         }
         .waiting .spinner {
             display: inline-block;
             width: 48px;
             height: 48px;
             border: 4px solid #e0e0e0;
-            border-top-color: #4a6cf7;
+            border-top-color: #4a90d9;
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
             margin-bottom: 20px;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .waiting h2 { font-size: 20px; color: #333; margin-bottom: 8px; }
-        .waiting p { color: #888; font-size: 14px; }
-        @media (max-width: 768px) {
-            .summary-item { min-width: calc(50% - 8px); }
-            .card { padding: 16px; }
-            table { font-size: 12px; }
-            th, td { padding: 6px 4px; }
+        .waiting h2 {
+            color: #333;
+            margin-bottom: 8px;
+        }
+        .waiting p {
+            color: #888;
+            font-size: 14px;
+        }
+        .waiting .progress-bar-bg {
+            width: 100%;
+            max-width: 400px;
+            height: 8px;
+            background: #e8ecf0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 20px auto;
+        }
+        .waiting .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4a90d9, #357abd);
+            border-radius: 4px;
+            transition: width 0.5s ease;
+            width: 0%;
+        }
+        .waiting .progress-text {
+            font-size: 24px;
+            font-weight: 700;
+            color: #4a90d9;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="card">
-            <h1>📊 Результаты поиска</h1>
-
             {% if waiting %}
+            <!-- Состояние ожидания -->
             <div class="waiting" id="waitingBlock">
                 <div class="spinner"></div>
-                <h2>⏳ Поиск выполняется...</h2>
-                <p>Пожалуйста, подождите. Страница обновится автоматически.</p>
+                <h2>🔍 Поиск данных во ФГИС «Аршин»</h2>
+                <p>Подождите, выполняется поиск по вашему запросу…</p>
+                <div class="progress-bar-bg">
+                    <div class="progress-bar-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-text" id="progressPct">0%</div>
+                <p id="currentInfo" style="margin-top:12px; color:#666; font-size:13px;"></p>
             </div>
+
+            <script>
+                const taskId = "{{ task_id }}";
+
+                function pollProgress() {
+                    fetch("/progress_data/" + taskId)
+                        .then(r => r.json())
+                        .then(data => {
+                            if (data.status === "complete") {
+                                window.location.reload();
+                                return;
+                            }
+                            if (data.status === "cancelled" || data.status === "not_found") {
+                                window.location.href = "/";
+                                return;
+                            }
+
+                            document.getElementById("progressFill").style.width = data.progress_pct + "%";
+                            document.getElementById("progressPct").textContent = Math.round(data.progress_pct) + "%";
+
+                            if (data.current_number) {
+                                document.getElementById("currentInfo").textContent =
+                                    "Итерация " + data.current_iteration + "/5 — " + data.current_number;
+                            }
+
+                            setTimeout(pollProgress, 2000);
+                        })
+                        .catch(() => {
+                            setTimeout(pollProgress, 2000);
+                        });
+                }
+
+                pollProgress();
+            </script>
+
             {% else %}
+            <!-- Результаты -->
+            <h1>📊 Результаты поиска</h1>
+            <p class="subtitle">Данные получены из ФГИС «Аршин»</p>
 
-            <div class="summary">
-                <div class="summary-item">
-                    <div class="summary-value">{{ total }}</div>
-                    <div class="summary-label">Всего номеров</div>
+            <div class="stats">
+                <div class="stat">
+                    <div class="stat-value">{{ stats.total }}</div>
+                    <div class="stat-label">Всего приборов</div>
                 </div>
-                <div class="summary-item">
-                    <div class="summary-value success">{{ total_records }}</div>
-                    <div class="summary-label">Найдено записей</div>
+                <div class="stat">
+                    <div class="stat-value" style="color:#27ae60">{{ stats.found }}</div>
+                    <div class="stat-label">Найдено</div>
                 </div>
-                <div class="summary-item">
-                    <div class="summary-value warning">{{ not_found_count }}</div>
-                    <div class="summary-label">Не найдено</div>
+                <div class="stat">
+                    <div class="stat-value" style="color:#e74c3c">{{ stats.not_found }}</div>
+                    <div class="stat-label">Не найдено</div>
                 </div>
+                {% if stats.type_mismatch and stats.type_mismatch > 0 %}
+                <div class="stat">
+                    <div class="stat-value" style="color:#e67e22">{{ stats.type_mismatch }}</div>
+                    <div class="stat-label">⚠️ Тип не совпал</div>
+                </div>
+                {% endif %}
             </div>
 
-            <div class="actions">
-                <form method="post" action="/download/{{ task_id }}" style="display:inline">
-                    <button type="submit" class="btn btn-success">📥 Скачать Excel</button>
-                </form>
-                <a href="/" class="btn btn-secondary">🔄 Новый поиск</a>
+            <div class="btn-group">
+                <a href="/download/{{ filename }}" class="btn btn-primary">⬇ Скачать результат (.xlsx)</a>
+                <a href="/" class="btn btn-secondary">← Новый запрос</a>
             </div>
 
-            {% if results %}
+            {% if rows %}
             <div class="table-wrap">
                 <table>
                     <thead>
                         <tr>
-                            <th>№</th>
-                            <th>Искомый номер</th>
-                            <th>Заводской номер СИ</th>
+                            <th>№ п/п</th>
+                            <th>Номер СИ</th>
+                            <th>Статус</th>
                             <th>Наименование СИ</th>
-                            <th>Тип СИ</th>
-                            <th>Модификация</th>
+                            <th>Заводской номер</th>
                             <th>Дата поверки</th>
                             <th>Действителен до</th>
                             <th>Результат</th>
@@ -245,75 +261,33 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for r in results %}
-                        <tr class="{% if r.title == 'Не найдено' %}not-found{% endif %}">
-                            <td>{{ loop.index + (page - 1) * per_page }}</td>
-                            <td><strong>{{ r.number }}</strong></td>
-                            <td>{{ r.mi_number }}</td>
-                            <td>{{ r.title }}</td>
-                            <td>{{ r.type }}</td>
-                            <td>{{ r.modification }}</td>
-                            <td>{{ r.verification_date }}</td>
-                            <td>{{ r.valid_date }}</td>
+                        {% for row in rows %}
+                        <tr>
+                            <td>{{ loop.index }}</td>
+                            <td><strong>{{ row.mi_number }}</strong></td>
                             <td>
-                                {% if r.applicability == 'ГОДЕН' %}
-                                <span class="badge badge-valid">ГОДЕН</span>
-                                {% elif r.applicability == 'НЕ ГОДЕН' %}
-                                <span class="badge badge-invalid">НЕ ГОДЕН</span>
-                                {% elif r.applicability %}
-                                <span class="badge badge-unknown">{{ r.applicability }}</span>
+                                {% if row.found and row.type_mismatch %}
+                                    <span class="type-mismatch">⚠️ Тип не совпал</span>
+                                {% elif row.found %}
+                                    <span class="found">✓ Найдено</span>
+                                {% else %}
+                                    <span class="not-found">✗ Не найдено</span>
                                 {% endif %}
                             </td>
-                            <td>{{ r.org_title }}</td>
+                            <td>{{ row.mi_name or '—' }}</td>
+                            <td>{{ row.serial_number or '—' }}</td>
+                            <td>{{ row.verification_date or '—' }}</td>
+                            <td>{{ row.valid_until or '—' }}</td>
+                            <td>{{ row.result or '—' }}</td>
+                            <td>{{ row.organization or '—' }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
-            {% else %}
-            <div class="empty-state">
-                <h2>😕 Нет результатов</h2>
-                <p>По вашему запросу ничего не найдено.</p>
-            </div>
             {% endif %}
-
-            {% if total_pages > 1 %}
-            <div class="pagination">
-                <form method="post" action="/page/{{ task_id }}" style="display:inline" class="page-form">
-                    <input type="hidden" name="page" value="{{ page - 1 }}">
-                    <button type="submit" class="page-btn" {% if page <= 1 %}disabled{% endif %}>← Назад</button>
-                </form>
-
-                <span class="page-info">Страница {{ page }} из {{ total_pages }}</span>
-
-                <form method="post" action="/page/{{ task_id }}" style="display:inline" class="page-form">
-                    <input type="hidden" name="page" value="{{ page + 1 }}">
-                    <button type="submit" class="page-btn" {% if page >= total_pages %}disabled{% endif %}>Вперёд →</button>
-                </form>
-            </div>
-            {% endif %}
-
             {% endif %}
         </div>
     </div>
-
-    {% if waiting %}
-    <script>
-        const taskId = '{{ task_id }}';
-        function checkStatus() {
-            fetch('/progress_data/' + taskId)
-                .then(r => r.json())
-                .then(data => {
-                    if (data.status === 'complete') {
-                        window.location.reload();
-                    } else {
-                        setTimeout(checkStatus, 2000);
-                    }
-                })
-                .catch(() => setTimeout(checkStatus, 2000));
-        }
-        setTimeout(checkStatus, 2000);
-    </script>
-    {% endif %}
 </body>
 </html>
