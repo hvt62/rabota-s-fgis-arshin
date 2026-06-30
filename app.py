@@ -25,26 +25,21 @@ lock = threading.Lock()
 
 
 def create_fgis_session() -> requests.Session:
-    """Создаёт сессию и получает cookies с главной страницы Аршина."""
+    """Создаёт сессию с браузерными заголовками."""
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept": "application/json, text/plain, */*",
         "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
+        "Referer": FGIS_BASE_URL,
     })
-    try:
-        resp = session.get(FGIS_BASE_URL, timeout=30)
-        resp.raise_for_status()
-    except Exception:
-        pass  # Если не получилось — пробуем работать без cookies
     return session
 
 
 def search_fgis(session: requests.Session, mi_number: str, mi_type: str = None) -> dict | None:
     """
     Поиск данных о средстве измерений во ФГИС «Аршин».
-    Использует переданную сессию с cookies.
     3 попытки при 500 ошибке с паузой 7.5 сек.
     rows=1000, фильтр по типу через mi.modification.
     """
@@ -55,13 +50,16 @@ def search_fgis(session: requests.Session, mi_number: str, mi_type: str = None) 
     if mi_type and mi_type.strip():
         params["mi_modification"] = f"*{mi_type.strip()}*"
 
+    print(f"[search_fgis] Запрос: {mi_number}, тип: {mi_type}")
     for attempt in range(1, 4):
         try:
             resp = session.get(FGIS_API_URL, params=params, timeout=30)
+            print(f"[search_fgis] Ответ {mi_number}: статус {resp.status_code}")
             if resp.status_code == 200:
                 data = resp.json()
                 results = data.get("results", [])
                 if not results:
+                    print(f"[search_fgis] {mi_number}: результатов нет")
                     return None
 
                 # Если тип указан — проверяем совпадение
@@ -87,34 +85,40 @@ def search_fgis(session: requests.Session, mi_number: str, mi_type: str = None) 
                     "organization": r.get("organization", ""),
                     "type_mismatch": type_mismatch,
                 }
+                print(f"[search_fgis] {mi_number}: найдено")
                 return result
 
             elif resp.status_code == 500:
+                print(f"[search_fgis] {mi_number}: 500 ошибка, попытка {attempt}/3")
                 if attempt < 3:
                     time.sleep(7.5)
                 continue
             else:
+                print(f"[search_fgis] {mi_number}: неожиданный статус {resp.status_code}")
                 return None
         except requests.exceptions.Timeout:
+            print(f"[search_fgis] {mi_number}: timeout, попытка {attempt}/3")
             if attempt < 3:
                 time.sleep(7.5)
             continue
-        except Exception:
+        except Exception as e:
+            print(f"[search_fgis] {mi_number}: ошибка {e}, попытка {attempt}/3")
             if attempt < 3:
                 time.sleep(7.5)
             continue
 
+    print(f"[search_fgis] {mi_number}: не найден после 3 попыток")
     return None
 
 
 def process_numbers(numbers, task_id, mi_type=None):
     """
     Обработка списка номеров:
-    - Создаёт отдельную сессию для задачи (со своими cookies)
+    - Создаёт отдельную сессию для задачи
     - 5 итераций с паузами [3, 7, 12, 18, 25] сек между номерами
     - Обновление прогресса
     """
-    # Каждая задача получает свою сессию с cookies
+    print(f"[process_numbers] Старт задачи {task_id}, номеров: {len(numbers)}")
     session = create_fgis_session()
 
     PAUSES = [3, 7, 12, 18, 25]
@@ -238,6 +242,8 @@ def process_numbers(numbers, task_id, mi_type=None):
         progress_store[task_id]["rows"] = all_rows
         progress_store[task_id]["stats"] = stats
         progress_store[task_id]["result_filename"] = result_filename
+
+    print(f"[process_numbers] Задача {task_id} завершена. Найдено: {found_count}, не найдено: {not_found_count}")
 
 
 @app.route("/", methods=["GET"])
