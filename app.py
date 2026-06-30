@@ -25,15 +25,29 @@ lock = threading.Lock()
 
 
 def create_fgis_session() -> requests.Session:
-    """Создаёт сессию с браузерными заголовками."""
+    """Создаёт сессию, получает cookies с главной страницы Аршина."""
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
-        "Referer": FGIS_BASE_URL,
     })
+    try:
+        # Сначала заходим на главную страницу, чтобы получить cookies
+        resp = session.get(FGIS_BASE_URL, timeout=15)
+        resp.raise_for_status()
+        # После получения cookies меняем Accept для API-запросов
+        session.headers.update({
+            "Accept": "application/json, text/plain, */*",
+            "Referer": FGIS_BASE_URL,
+        })
+    except Exception:
+        # Если не получилось — пробуем работать без cookies
+        session.headers.update({
+            "Accept": "application/json, text/plain, */*",
+            "Referer": FGIS_BASE_URL,
+        })
     return session
 
 
