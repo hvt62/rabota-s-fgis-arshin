@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ФГИС «Аршин» — Поиск приборов учета</title>
+    <title>Поиск СИ в ФГИС Аршин</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -11,39 +11,37 @@
             background: #f0f2f5;
             min-height: 100vh;
             display: flex;
-            flex-direction: column;
             align-items: center;
             justify-content: center;
             padding: 20px;
         }
         .card {
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.1);
             padding: 40px;
-            max-width: 600px;
+            max-width: 560px;
             width: 100%;
         }
         h1 {
-            font-size: 24px;
-            color: #1a1a1a;
+            font-size: 22px;
+            color: #1a1a2e;
             margin-bottom: 8px;
         }
-        .subtitle {
-            color: #666;
+        p {
+            color: #555;
             font-size: 14px;
-            margin-bottom: 28px;
-            line-height: 1.5;
+            margin-bottom: 24px;
         }
         .form-group {
             margin-bottom: 20px;
         }
         label {
             display: block;
-            font-weight: 600;
             font-size: 14px;
+            font-weight: 600;
             color: #333;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
         }
         input[type="file"] {
             width: 100%;
@@ -52,33 +50,33 @@
             border-radius: 8px;
             background: #fafafa;
             cursor: pointer;
-            font-size: 14px;
         }
         input[type="file"]:hover {
-            border-color: #4a90d9;
+            border-color: #4a6cf7;
         }
         input[type="text"] {
             width: 100%;
-            padding: 12px;
-            border: 2px solid #ddd;
+            padding: 10px 12px;
+            border: 2px solid #d0d0d0;
             border-radius: 8px;
             font-size: 15px;
+            color: #333;
+            background: #fafafa;
             transition: border-color 0.2s;
         }
         input[type="text"]:focus {
-            border-color: #4a90d9;
+            border-color: #4a6cf7;
             outline: none;
+            background: #fff;
         }
-        .hint {
-            font-size: 12px;
-            color: #999;
-            margin-top: 6px;
+        input[type="text"]::placeholder {
+            color: #aaa;
         }
         button {
             width: 100%;
-            padding: 14px;
-            background: #4a90d9;
-            color: white;
+            padding: 12px;
+            background: #4a6cf7;
+            color: #fff;
             border: none;
             border-radius: 8px;
             font-size: 16px;
@@ -86,17 +84,41 @@
             cursor: pointer;
             transition: background 0.2s;
         }
-        button:hover { background: #357abd; }
+        button:hover { background: #3b5de7; }
         button:disabled {
-            background: #b0c4de;
+            background: #a0b0f0;
             cursor: not-allowed;
+        }
+        .btn-secondary {
+            background: #6c757d;
+        }
+        .btn-secondary:hover { background: #5a6268; }
+        .error {
+            background: #fff0f0;
+            border: 1px solid #ffc0c0;
+            color: #c00;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 14px;
+        }
+        .info {
+            background: #f0f7ff;
+            border: 1px solid #c0d8ff;
+            color: #1a5cc0;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 13px;
+            line-height: 1.5;
         }
         .divider {
             display: flex;
             align-items: center;
-            margin: 24px 0;
+            margin: 28px 0;
             color: #999;
             font-size: 13px;
+            font-weight: 500;
         }
         .divider::before,
         .divider::after {
@@ -105,91 +127,91 @@
             height: 1px;
             background: #e0e0e0;
         }
-        .divider span {
-            padding: 0 16px;
-        }
-        .flash {
-            padding: 12px 16px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            font-size: 14px;
-        }
-        .flash.error { background: #ffe8e8; color: #c0392b; }
-        .flash.success { background: #e8f5e9; color: #2e7d32; }
-        .loader {
+        .divider::before { margin-right: 16px; }
+        .divider::after { margin-left: 16px; }
+        .spinner {
             display: none;
             text-align: center;
             margin-top: 16px;
         }
-        .loader.active { display: block; }
-        .spinner {
+        .spinner.active { display: block; }
+        .spinner::after {
+            content: '';
             display: inline-block;
-            width: 20px;
-            height: 20px;
+            width: 24px;
+            height: 24px;
             border: 3px solid #e0e0e0;
-            border-top-color: #4a90d9;
+            border-top-color: #4a6cf7;
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
-            margin-right: 8px;
-            vertical-align: middle;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .loader-text {
-            display: inline-block;
-            vertical-align: middle;
+        .spinner-text {
+            margin-top: 8px;
             color: #666;
-            font-size: 14px;
+            font-size: 13px;
+        }
+        .section-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: #444;
+            margin-bottom: 16px;
+        }
+        .hint {
+            font-size: 12px;
+            color: #888;
+            margin-top: 4px;
         }
     </style>
 </head>
 <body>
     <div class="card">
-        <h1>📋 ФГИС «Аршин»</h1>
-        <p class="subtitle">
-            Поиск данных о средствах измерений во ФГИС «Аршин».<br>
-            Загрузите Excel-файл или введите номер вручную.
-        </p>
+        <h1>🔍 Поиск СИ в ФГИС «Аршин»</h1>
+        <p>Найдите сведения о поверке средств измерений</p>
 
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="flash {{ category }}">{{ message }}</div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
+        {% if error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
 
         <!-- Форма ручного ввода -->
+        <div class="section-title">✏️ Ручной ввод</div>
         <form method="post" id="manualForm">
             <input type="hidden" name="mode" value="manual">
             <div class="form-group">
-                <label for="manual_number">Номер средства измерений</label>
+                <label for="manual_number">Номер СИ <span style="color:#c00">*</span></label>
                 <input type="text" name="manual_number" id="manual_number"
-                       placeholder="Например: 12345-67890" required>
+                       placeholder="например, 12345-67890" required>
             </div>
             <div class="form-group">
-                <label for="manual_type">Тип СИ (необязательно)</label>
+                <label for="manual_type">Тип СИ <span style="color:#999">(необязательно)</span></label>
                 <input type="text" name="manual_type" id="manual_type"
-                       placeholder="Например: Теплосчётчик">
-                <div class="hint">Если указан, будет фильтрация по типу</div>
+                       placeholder="например, СГ-ЭК10В-2">
+                <div class="hint">Уточняющий фильтр для более точного поиска</div>
             </div>
-            <button type="submit" id="manualBtn">🔍 Найти</button>
+            <button type="submit" id="manualBtn">🔎 Найти</button>
         </form>
 
-        <div class="divider"><span>или</span></div>
+        <div class="divider">или</div>
 
         <!-- Форма загрузки файла -->
+        <div class="section-title">📁 Загрузка Excel-файла</div>
+        <div class="info">
+            📌 <strong>Столбец A</strong> — номера СИ (обязательно)<br>
+            📌 <strong>Столбец B</strong> — обозначение типа СИ (необязательно)<br>
+            📌 Первая строка — заголовки, данные начиная со второй строки
+        </div>
+
         <form method="post" enctype="multipart/form-data" id="uploadForm">
+            <input type="hidden" name="mode" value="file">
             <div class="form-group">
-                <label for="file">Загрузить Excel-файл</label>
-                <input type="file" name="file" id="file" accept=".xlsx">
-                <div class="hint">Формат: .xlsx, столбец A — номера СИ</div>
+                <label for="file">Выберите файл</label>
+                <input type="file" name="file" id="file" accept=".xlsx" required>
             </div>
-            <button type="submit" id="submitBtn">📂 Обработать файл</button>
+            <button type="submit" id="submitBtn" class="btn-secondary">📂 Загрузить и найти</button>
         </form>
 
-        <div class="loader" id="loader">
-            <span class="spinner"></span>
-            <span class="loader-text">Идет поиск данных во ФГИС «Аршин»…</span>
+        <div class="spinner" id="spinner">
+            <div class="spinner-text">Поиск данных… это может занять некоторое время</div>
         </div>
     </div>
 
@@ -197,11 +219,13 @@
         document.getElementById('manualForm').addEventListener('submit', function() {
             document.getElementById('manualBtn').disabled = true;
             document.getElementById('manualBtn').textContent = '⏳ Поиск…';
+            document.getElementById('spinner').classList.add('active');
         });
+
         document.getElementById('uploadForm').addEventListener('submit', function() {
             document.getElementById('submitBtn').disabled = true;
-            document.getElementById('submitBtn').textContent = '⏳ Обработка…';
-            document.getElementById('loader').classList.add('active');
+            document.getElementById('submitBtn').textContent = '⏳ Поиск…';
+            document.getElementById('spinner').classList.add('active');
         });
     </script>
 </body>

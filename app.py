@@ -1,435 +1,527 @@
 import os
 import time
-import json
 import threading
+import uuid
 import requests
 import openpyxl
 from io import BytesIO
-from flask import Flask, render_template, request, flash, send_file, redirect, url_for, jsonify
-from werkzeug.utils import secure_filename
+from flask import Flask, render_template, request, send_file, redirect, url_for
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24).hex()
 
-UPLOAD_FOLDER = '/tmp/uploads'
-RESULT_FOLDER = '/tmp/results'
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(RESULT_FOLDER, exist_ok=True)
+VERSION = "1.0.0"
 
-FGIS_BASE_URL = "https://fgis.gost.ru/fundmetrology"
-FGIS_API_URL = f"{FGIS_BASE_URL}/api/verify_results"
+# Новый рабочий endpoint ФГИС «Аршин»
+ARSHIN_URL = "https://fgis.gost.ru/fundmetrology/cm/xcdb/vri/select"
+ARSHIN_MAIN = "https://fgis.gost.ru/fundmetrology/cm/"
 
-# Хранилище прогресса {task_id: {...}}
+# Поля, которые запрашиваем у API
+FIELDS = [
+    "vri_id",
+    "org_title",
+    "mi.mitnumber",
+    "mi.mititle",
+    "mi.mitype",
+    "mi.modification",
+    "mi.number",
+    "verification_date",
+    "valid_date",
+    "applicability",
+    "result_docnum",
+    "sticker_num",
+]
+
+# Сессия для запросов к Аршину (с cookies)
+_session = None
+_session_lock = threading.Lock()
+
+# Хранилище прогресса задач
 progress_store = {}
-lock = threading.Lock()
+progress_lock = threading.Lock()
 
 
-def create_fgis_session() -> requests.Session:
-    """Создаёт сессию, получает cookies с главной страницы Аршина."""
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
-    })
-    try:
-        # Сначала заходим на главную страницу, чтобы получить cookies
-        resp = session.get(FGIS_BASE_URL, timeout=15)
-        resp.raise_for_status()
-        # После получения cookies меняем Accept для API-запросов
+def get_arshin_session():
+    """Создаёт сессию с cookies, полученными с главной страницы Аршина."""
+    global _session
+    if _session is not None:
+        return _session
+
+    with _session_lock:
+        if _session is not None:
+            return _session
+
+        session = requests.Session()
         session.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
             "Accept": "application/json, text/plain, */*",
-            "Referer": FGIS_BASE_URL,
+            "Accept-Language": "ru,en;q=0.9",
         })
-    except Exception:
-        # Если не получилось — пробуем работать без cookies
-        session.headers.update({
-            "Accept": "application/json, text/plain, */*",
-            "Referer": FGIS_BASE_URL,
-        })
-    return session
+
+        try:
+            resp = session.get(ARSHIN_MAIN, timeout=30)
+            resp.raise_for_status()
+            print(f"[Сессия] Статус: {resp.status_code}")
+            print(f"[Сессия] Cookies от сервера: {dict(session.cookies)}")
+        except Exception as e:
+            print(f"[Сессия] Ошибка получения cookies: {e}")
+
+        _session = session
+        return _session
 
 
-def search_fgis(session: requests.Session, mi_number: str, mi_type: str = None) -> dict | None:
-    """
-    Поиск данных о средстве измерений во ФГИС «Аршин».
-    3 попытки при 500 ошибке с паузой 7.5 сек.
-    rows=1000, фильтр по типу через mi.modification.
-    """
-    params = {
-        "mi_number": f"*{mi_number.strip()}*",
-        "rows": 1000,
-    }
-    if mi_type and mi_type.strip():
-        params["mi_modification"] = f"*{mi_type.strip()}*"
+def _do_request(mi_number, params, label):
+    """Выполнить запрос к API с 3 попытками при 500."""
+    headers = {"Referer": "https://fgis.gost.ru/fundmetrology/cm/results"}
+    session = get_arshin_session()
 
-    print(f"[search_fgis] Запрос: {mi_number}, тип: {mi_type}")
     for attempt in range(1, 4):
         try:
-            resp = session.get(FGIS_API_URL, params=params, timeout=30)
-            print(f"[search_fgis] Ответ {mi_number}: статус {resp.status_code}")
-            if resp.status_code == 200:
-                data = resp.json()
-                results = data.get("results", [])
-                if not results:
-                    print(f"[search_fgis] {mi_number}: результатов нет")
-                    return None
-
-                # Если тип указан — проверяем совпадение
-                type_mismatch = False
-                if mi_type and mi_type.strip():
-                    type_found = False
-                    for r in results:
-                        mod = r.get("mi_modification", "") or ""
-                        if mi_type.strip().lower() in mod.lower():
-                            type_found = True
-                            break
-                    if not type_found:
-                        type_mismatch = True
-
-                # Берём последнюю (самую свежую) поверку
-                r = results[-1]
-                result = {
-                    "mi_name": r.get("mi_name", ""),
-                    "serial_number": r.get("serial_number", ""),
-                    "verification_date": r.get("verification_date", ""),
-                    "valid_until": r.get("valid_until", ""),
-                    "result": r.get("result", ""),
-                    "organization": r.get("organization", ""),
-                    "type_mismatch": type_mismatch,
-                }
-                print(f"[search_fgis] {mi_number}: найдено")
-                return result
-
-            elif resp.status_code == 500:
-                print(f"[search_fgis] {mi_number}: 500 ошибка, попытка {attempt}/3")
-                if attempt < 3:
-                    time.sleep(7.5)
+            resp = session.get(ARSHIN_URL, params=params, headers=headers, timeout=60)
+            print(f"[API] {mi_number}: {label}, попытка {attempt}, статус {resp.status_code}")
+            resp.raise_for_status()
+            data = resp.json()
+            docs = data.get("response", {}).get("docs", [])
+            print(f"[API] {mi_number}: {label}: найдено {len(docs)} документов")
+            return docs
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else 0
+            if status == 500 and attempt < 3:
+                print(f"[API] {mi_number}: {label}: 500, пауза 7.5с, попытка {attempt+1}/3")
+                time.sleep(7.5)
                 continue
-            else:
-                print(f"[search_fgis] {mi_number}: неожиданный статус {resp.status_code}")
-                return None
-        except requests.exceptions.Timeout:
-            print(f"[search_fgis] {mi_number}: timeout, попытка {attempt}/3")
+            print(f"[API] {mi_number}: {label}: HTTP ошибка {status}")
+            return {"error": str(e)}
+        except requests.exceptions.RequestException as e:
+            print(f"[API] {mi_number}: {label}: ошибка {e}")
             if attempt < 3:
                 time.sleep(7.5)
-            continue
-        except Exception as e:
-            print(f"[search_fgis] {mi_number}: ошибка {e}, попытка {attempt}/3")
-            if attempt < 3:
-                time.sleep(7.5)
-            continue
+                continue
+            return {"error": str(e)}
 
-    print(f"[search_fgis] {mi_number}: не найден после 3 попыток")
-    return None
+    return {"error": "3 попытки не удались"}
 
 
-def process_numbers(numbers, task_id, mi_type=None):
-    """
-    Обработка списка номеров:
-    - Создаёт отдельную сессию для задачи
-    - 5 итераций с паузами [3, 7, 12, 18, 25] сек между номерами
-    - Обновление прогресса
-    """
-    print(f"[process_numbers] Старт задачи {task_id}, номеров: {len(numbers)}")
-    session = create_fgis_session()
+def search_arshin(mi_number, mi_type=None):
+    """Поиск по подстроке mi.number:*номер* + mi.modification:*тип* (если задан).
+       3 попытки при 500 ошибке."""
+    fq = [f"mi.number:*{mi_number}*"]
+    if mi_type:
+        fq.append(f"mi.modification:*{mi_type}*")
+    params = {
+        "fq": fq,
+        "q": "*",
+        "fl": ",".join(FIELDS),
+        "sort": "verification_date desc,org_title asc",
+        "rows": 1000,
+        "start": 0,
+    }
+    return _do_request(mi_number, params, "поиск")
 
-    PAUSES = [3, 7, 12, 18, 25]
-    ITERATIONS = 5
 
-    all_rows = []
-    found_count = 0
-    not_found_count = 0
-    type_mismatch_count = 0
+def format_date(date_str):
+    if not date_str:
+        return ""
+    return date_str[:10].replace("-", ".")
 
-    with lock:
-        progress_store[task_id]["total"] = len(numbers)
-        progress_store[task_id]["status"] = "processing"
-        progress_store[task_id]["current_iteration"] = 0
-        progress_store[task_id]["current_number"] = ""
-        progress_store[task_id]["progress_pct"] = 0
 
-    for iteration in range(1, ITERATIONS + 1):
-        with lock:
-            progress_store[task_id]["current_iteration"] = iteration
-            progress_store[task_id]["iteration_phase"] = f"Итерация {iteration}/{ITERATIONS}"
+def format_applicability(val):
+    if val is True:
+        return "ГОДЕН"
+    elif val is False:
+        return "НЕ ГОДЕН"
+    return str(val)
 
-        for idx, number in enumerate(numbers, start=1):
-            # Проверяем, не отменена ли задача
-            with lock:
+
+def process_docs(docs, num, mi_type):
+    """Обработать список документов: форматирование без локальной фильтрации."""
+    if not docs:
+        return []
+
+    records = []
+    for doc in docs:
+        record = {
+            "number": num,
+            "input_type": mi_type,
+            "mi_number": doc.get("mi.number", ""),
+            "title": doc.get("mi.mititle", ""),
+            "type": doc.get("mi.mitype", ""),
+            "modification": doc.get("mi.modification", ""),
+            "verification_date": format_date(doc.get("verification_date", "")),
+            "valid_date": format_date(doc.get("valid_date", "")),
+            "applicability": format_applicability(doc.get("applicability")),
+            "org_title": doc.get("org_title", ""),
+            "result_docnum": doc.get("result_docnum", ""),
+        }
+        records.append(record)
+
+    return records
+
+
+def cancellable_sleep(task_id, seconds):
+    """Сон с проверкой отмены каждую секунду."""
+    for _ in range(int(seconds)):
+        with progress_lock:
+            if progress_store[task_id].get("cancel"):
+                return True
+        time.sleep(1)
+    return False
+
+
+def process_items_background(task_id, rows_data):
+    """Фоновая обработка всех номеров с обновлением прогресса."""
+    delays = [3, 7, 12, 18, 25]
+    pending = list(rows_data)
+    errors_list = []
+
+    with progress_lock:
+        progress_store[task_id]["pending_items"] = pending
+
+    for iteration, delay in enumerate(delays, 1):
+        if not pending:
+            break
+
+        with progress_lock:
+            progress_store[task_id]["errors"] = 0
+            progress_store[task_id]["not_found"] = 0
+
+        print(f"\n[App] === Итерация {iteration}, пауза {delay}с, осталось {len(pending)} номеров ===")
+
+        still_pending = []
+
+        for idx, item in enumerate(pending):
+            with progress_lock:
                 if progress_store[task_id].get("cancel"):
-                    progress_store[task_id]["status"] = "cancelled"
+                    print(f"[App] {task_id}: получен сигнал отмены, завершаем поток")
                     return
 
-            with lock:
-                progress_store[task_id]["current_number"] = number
-                overall_progress = ((iteration - 1) * len(numbers) + idx) / (ITERATIONS * len(numbers)) * 100
-                progress_store[task_id]["progress_pct"] = round(overall_progress, 1)
+            num = item["number"]
+            mi_type = item["type"] if item["type"] else ""
 
-            data = search_fgis(session, number, mi_type)
+            docs = search_arshin(num, mi_type if mi_type else None)
 
-            if data:
-                found_count += 1
-                if data.get("type_mismatch"):
-                    type_mismatch_count += 1
-                all_rows.append({
-                    "mi_number": number,
-                    "found": True,
-                    "type_mismatch": data.get("type_mismatch", False),
-                    "mi_name": data["mi_name"],
-                    "serial_number": data["serial_number"],
-                    "verification_date": data["verification_date"],
-                    "valid_until": data["valid_until"],
-                    "result": data["result"],
-                    "organization": data["organization"],
-                })
-            else:
-                not_found_count += 1
-                all_rows.append({
-                    "mi_number": number,
-                    "found": False,
-                    "type_mismatch": False,
-                    "mi_name": "",
-                    "serial_number": "",
-                    "verification_date": "",
-                    "valid_until": "",
-                    "result": "",
-                    "organization": "",
-                })
+            if isinstance(docs, dict) and "error" in docs:
+                still_pending.append(item)
+                with progress_lock:
+                    progress_store[task_id]["errors"] += 1
+                if idx < len(pending) - 1:
+                    if cancellable_sleep(task_id, delay):
+                        return
+                continue
 
-            # Пауза между номерами (кроме последнего номера в последней итерации)
-            if idx < len(numbers) or iteration < ITERATIONS:
-                pause = PAUSES[min(iteration - 1, len(PAUSES) - 1)]
-                time.sleep(pause)
+            if not docs:
+                still_pending.append(item)
+                with progress_lock:
+                    progress_store[task_id]["not_found"] += 1
+                if idx < len(pending) - 1:
+                    if cancellable_sleep(task_id, delay):
+                        return
+                continue
 
-    # Сохраняем результат
-    wb_out = openpyxl.Workbook()
-    ws_out = wb_out.active
-    ws_out.title = "Результаты"
+            records = process_docs(docs, num, mi_type)
 
-    headers = [
-        "№ п/п", "Номер СИ", "Статус",
-        "Наименование СИ", "Заводской номер",
-        "Дата поверки", "Действителен до",
-        "Результат поверки", "Организация",
-    ]
-    ws_out.append(headers)
+            with progress_lock:
+                progress_store[task_id]["results"].extend(records)
+                progress_store[task_id]["processed"] += 1
+                pending_items = progress_store[task_id].get("pending_items", [])
+                progress_store[task_id]["pending_items"] = [pi for pi in pending_items if pi["number"] != num]
 
-    for idx, row in enumerate(all_rows, start=1):
-        if row["found"]:
-            status = "Найдено"
-            if row["type_mismatch"]:
-                status = "Найдено ⚠️ тип не совпал"
-            ws_out.append([
-                idx, row["mi_number"], status,
-                row["mi_name"], row["serial_number"],
-                row["verification_date"], row["valid_until"],
-                row["result"], row["organization"],
-            ])
-        else:
-            ws_out.append([idx, row["mi_number"], "Не найдено", "—", "—", "—", "—", "—", "—"])
+            if idx < len(pending) - 1:
+                if cancellable_sleep(task_id, delay):
+                    return
 
-    # Автоширина колонок
-    for col in ws_out.columns:
-        max_len = 0
-        col_letter = col[0].column_letter
-        for cell in col:
-            if cell.value:
-                max_len = max(max_len, len(str(cell.value)))
-        ws_out.column_dimensions[col_letter].width = min(max_len + 4, 50)
+        pending = still_pending
 
-    result_filename = f"result_{task_id}.xlsx"
-    output_path = os.path.join(RESULT_FOLDER, result_filename)
-    wb_out.save(output_path)
+        with progress_lock:
+            progress_store[task_id]["pending_items"] = pending
 
-    stats = {
-        "total": len(numbers),
-        "found": found_count,
-        "not_found": not_found_count,
-        "type_mismatch": type_mismatch_count,
-    }
+    with progress_lock:
+        pending = progress_store[task_id].get("pending_items", [])
+        results = progress_store[task_id]["results"]
 
-    with lock:
+    for item in pending:
+        results.append({
+            "number": item["number"],
+            "input_type": item["type"] if item["type"] else "",
+            "mi_number": "",
+            "title": "Не найдено",
+            "type": "",
+            "modification": "",
+            "verification_date": "",
+            "valid_date": "",
+            "applicability": "",
+            "org_title": "",
+            "result_docnum": "",
+        })
+
+    order = {item["number"]: idx for idx, item in enumerate(rows_data)}
+    results.sort(key=lambda r: order.get(r["number"], 999))
+
+    with progress_lock:
         progress_store[task_id]["status"] = "complete"
-        progress_store[task_id]["progress_pct"] = 100
-        progress_store[task_id]["rows"] = all_rows
-        progress_store[task_id]["stats"] = stats
-        progress_store[task_id]["result_filename"] = result_filename
-
-    print(f"[process_numbers] Задача {task_id} завершена. Найдено: {found_count}, не найдено: {not_found_count}")
+        progress_store[task_id]["results"] = results
+        progress_store[task_id]["errors_list"] = errors_list
+        progress_store[task_id]["not_found_count"] = sum(1 for r in results if r["title"] == "Не найдено")
+        progress_store[task_id]["rows_data"] = rows_data
 
 
-@app.route("/", methods=["GET"])
+@app.route("/", methods=["GET", "POST"])
 def index():
+    if request.method == "POST":
+        mode = request.form.get("mode", "file")
+
+        # --- Ручной ввод ---
+        if mode == "manual":
+            manual_number = request.form.get("manual_number", "").strip()
+            if not manual_number:
+                return render_template("index.html", error="Введите номер СИ")
+
+            manual_type = request.form.get("manual_type", "").strip()
+            rows_data = [{"number": manual_number, "type": manual_type}]
+
+            print(f"[App] Ручной ввод: номер={manual_number}, тип={manual_type}")
+
+        # --- Загрузка файла ---
+        else:
+            file = request.files.get("file")
+            if not file or file.filename == "":
+                return render_template("index.html", error="Файл не выбран")
+
+            try:
+                wb = openpyxl.load_workbook(file, read_only=True)
+                ws = wb.active
+            except Exception as e:
+                return render_template("index.html", error=f"Ошибка чтения Excel: {e}")
+
+            rows_data = []
+            for row in ws.iter_rows(min_row=2, max_col=2, values_only=True):
+                num = row[0]
+                if num is not None:
+                    num = str(num).strip()
+                    type_val = str(row[1]).strip() if row[1] is not None else ""
+                    rows_data.append({"number": num, "type": type_val})
+
+            print(f"[App] Прочитано строк: {len(rows_data)}")
+
+            if not rows_data:
+                return render_template("index.html", error="Нет номеров в первом столбце")
+
+        # --- Общий запуск задачи ---
+        task_id = str(uuid.uuid4())
+        with progress_lock:
+            progress_store[task_id] = {
+                "total": len(rows_data),
+                "processed": 0,
+                "errors": 0,
+                "not_found": 0,
+                "status": "running",
+                "cancel": False,
+                "start_time": time.time(),
+                "results": [],
+                "errors_list": [],
+                "rows_data": rows_data,
+                "not_found_count": 0,
+                "pending_items": [],
+            }
+
+        thread = threading.Thread(target=process_items_background, args=(task_id, rows_data))
+        thread.daemon = True
+        thread.start()
+
+        # Ручной ввод — сразу на страницу результатов (с ожиданием)
+        if mode == "manual":
+            return redirect(url_for("results_page", task_id=task_id))
+
+        return redirect(url_for("progress_page", task_id=task_id))
+
     return render_template("index.html")
 
 
-@app.route("/", methods=["POST"])
-def upload():
-    # Ручной ввод
-    mode = request.form.get("mode", "")
-    if mode == "manual":
-        manual_number = request.form.get("manual_number", "").strip()
-        if not manual_number:
-            flash("Введите номер средства измерений", "error")
-            return render_template("index.html")
-        manual_type = request.form.get("manual_type", "").strip()
-
-        import uuid
-        task_id = str(uuid.uuid4())
-
-        numbers = [manual_number]
-
-        with lock:
-            progress_store[task_id] = {
-                "status": "starting",
-                "total": 1,
-                "current_number": "",
-                "current_iteration": 0,
-                "progress_pct": 0,
-                "cancel": False,
-            }
-
-        thread = threading.Thread(
-            target=process_numbers,
-            args=(numbers, task_id, manual_type if manual_type else None),
-            daemon=True
-        )
-        thread.start()
-
-        return redirect(url_for("results_page", task_id=task_id))
-
-    # Загрузка файла
-    if "file" not in request.files:
-        flash("Файл не выбран", "error")
-        return render_template("index.html")
-
-    file = request.files["file"]
-    if file.filename == "":
-        flash("Файл не выбран", "error")
-        return render_template("index.html")
-
-    if not file.filename.endswith(".xlsx"):
-        flash("Поддерживаются только файлы формата .xlsx", "error")
-        return render_template("index.html")
-
-    filename = secure_filename(file.filename)
-    input_path = os.path.join(UPLOAD_FOLDER, filename)
-    file.save(input_path)
-
-    # Читаем номера из Excel
-    try:
-        wb = openpyxl.load_workbook(input_path)
-        ws = wb.active
-        numbers = []
-        for row in ws.iter_rows(min_row=1, max_col=1, values_only=True):
-            val = row[0]
-            if val is not None:
-                s = str(val).strip()
-                if s:
-                    numbers.append(s)
-        if not numbers:
-            flash("В файле не найдено ни одного номера", "error")
-            return render_template("index.html")
-    except Exception:
-        flash("Ошибка при чтении файла", "error")
-        return render_template("index.html")
-
-    import uuid
-    task_id = str(uuid.uuid4())
-
-    with lock:
-        progress_store[task_id] = {
-            "status": "starting",
-            "total": len(numbers),
-            "current_number": "",
-            "current_iteration": 0,
-            "progress_pct": 0,
-            "cancel": False,
-        }
-
-    thread = threading.Thread(
-        target=process_numbers,
-        args=(numbers, task_id),
-        daemon=True
-    )
-    thread.start()
-
-    return redirect(url_for("progress", task_id=task_id))
-
-
 @app.route("/progress/<task_id>")
-def progress(task_id):
-    with lock:
+def progress_page(task_id):
+    with progress_lock:
         if task_id not in progress_store:
-            flash("Задача не найдена", "error")
             return redirect(url_for("index"))
-        task = dict(progress_store[task_id])
-
-    return render_template("progress.html", task_id=task_id, task=task)
+    return render_template("progress.html", task_id=task_id, version=VERSION)
 
 
 @app.route("/progress_data/<task_id>")
 def progress_data(task_id):
-    with lock:
-        if task_id not in progress_store:
-            return jsonify({"status": "not_found"})
-        task = dict(progress_store[task_id])
+    with progress_lock:
+        data = progress_store.get(task_id)
+        if not data:
+            return {"status": "error", "message": "Задача не найдена"}
+        return {
+            "total": data["total"],
+            "processed": data["processed"],
+            "errors": data["errors"],
+            "not_found": data["not_found"],
+            "status": data["status"],
+        }
 
-    return jsonify({
-        "status": task.get("status", "unknown"),
-        "progress_pct": task.get("progress_pct", 0),
-        "current_number": task.get("current_number", ""),
-        "current_iteration": task.get("current_iteration", 0),
-        "total": task.get("total", 0),
-    })
 
-
-@app.route("/cancel/<task_id>", methods=["POST"])
+@app.route("/cancel_task/<task_id>", methods=["POST"])
 def cancel_task(task_id):
-    with lock:
-        if task_id in progress_store:
-            progress_store[task_id]["cancel"] = True
-    flash("Поиск отменён", "success")
-    return redirect(url_for("index"))
+    with progress_lock:
+        data = progress_store.get(task_id)
+        if not data or data["status"] != "running":
+            return {"status": "error", "message": "Задача не найдена или уже завершена"}
+        data["cancel"] = True
+
+        rows_data = data["rows_data"]
+        results = data["results"]
+        errors_list = data["errors_list"]
+        pending = data.get("pending_items", [])
+
+        for item in pending:
+            results.append({
+                "number": item["number"],
+                "input_type": item["type"] if item["type"] else "",
+                "mi_number": "",
+                "title": "Не найдено",
+                "type": "",
+                "modification": "",
+                "verification_date": "",
+                "valid_date": "",
+                "applicability": "",
+                "org_title": "",
+                "result_docnum": "",
+            })
+
+        order = {item["number"]: idx for idx, item in enumerate(rows_data)}
+        results.sort(key=lambda r: order.get(r["number"], 999))
+
+        data["status"] = "complete"
+        data["results"] = results
+        data["errors_list"] = errors_list
+        data["not_found_count"] = sum(1 for r in results if r["title"] == "Не найдено")
+        data["rows_data"] = rows_data
+
+    return {"status": "ok"}
 
 
 @app.route("/results/<task_id>")
 def results_page(task_id):
-    with lock:
-        if task_id not in progress_store:
-            flash("Задача не найдена", "error")
+    with progress_lock:
+        data = progress_store.get(task_id)
+        if not data:
             return redirect(url_for("index"))
-        task = dict(progress_store[task_id])
 
-    status = task.get("status", "unknown")
+        # Если задача ещё выполняется — показываем страницу с ожиданием
+        if data["status"] != "complete":
+            return render_template("result.html", task_id=task_id, waiting=True,
+                                   total=0, total_records=0, not_found_count=0,
+                                   results=[], errors=[], page=1, total_pages=1,
+                                   per_page=50, all_results=[])
 
-    if status == "processing" or status == "starting":
-        return render_template("result.html", task_id=task_id, waiting=True, rows=None, stats=None, filename=None)
+        results = data["results"]
+        rows_data = data["rows_data"]
+        errors = data["errors_list"]
+        not_found_count = data["not_found_count"]
+        total_records = len(results) - not_found_count
 
-    if status == "complete":
-        rows = task.get("rows", [])
-        stats = task.get("stats", {})
-        filename = task.get("result_filename", "")
-        return render_template("result.html", task_id=task_id, waiting=False, rows=rows, stats=stats, filename=filename)
+    per_page = 50
+    total_pages = max(1, (len(results) + per_page - 1) // per_page)
+    page_results = results[:per_page]
 
-    if status == "cancelled":
-        flash("Поиск был отменён", "error")
-        return redirect(url_for("index"))
+    return render_template(
+        "result.html", results=page_results, errors=errors, total=len(rows_data),
+        not_found_count=not_found_count,
+        page=1, total_pages=total_pages, per_page=per_page,
+        all_results=results, total_records=total_records,
+        task_id=task_id, waiting=False
+    )
 
-    flash("Неизвестный статус задачи", "error")
-    return redirect(url_for("index"))
+
+@app.route("/page/<task_id>", methods=["POST"])
+def page(task_id):
+    with progress_lock:
+        data = progress_store.get(task_id)
+        if not data or data["status"] != "complete":
+            return redirect(url_for("index"))
+
+        results = data["results"]
+
+    page = int(request.form.get("page", 1))
+    per_page = 50
+    total_pages = max(1, (len(results) + per_page - 1) // per_page)
+
+    if page < 1:
+        page = 1
+    if page > total_pages:
+        page = total_pages
+
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+    page_results = results[start_idx:end_idx]
+
+    return render_template(
+        "result.html", results=page_results, errors=[], total=0,
+        not_found_count=0,
+        page=page, total_pages=total_pages, per_page=per_page,
+        all_results=results, total_records=len(results),
+        task_id=task_id, waiting=False
+    )
 
 
-@app.route("/download/<filename>")
-def download(filename):
-    path = os.path.join(RESULT_FOLDER, filename)
-    if not os.path.exists(path):
-        flash("Файл не найден. Загрузите файл заново.", "error")
-        return redirect(url_for("index"))
-    return send_file(path, as_attachment=True, download_name="fgis_arshin_result.xlsx")
+@app.route("/download/<task_id>", methods=["POST"])
+def download(task_id):
+    with progress_lock:
+        data = progress_store.get(task_id)
+        if not data or data["status"] != "complete":
+            return {"status": "error", "message": "Результаты не найдены"}
+
+        results = data["results"]
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Результаты"
+
+    headers = [
+        "Искомый номер",
+        "Заданный тип",
+        "Заводской номер СИ",
+        "Наименование СИ",
+        "Тип СИ",
+        "Модификация",
+        "Дата поверки",
+        "Действителен до",
+        "Результат",
+        "Организация",
+        "Номер документа",
+    ]
+    ws.append(headers)
+
+    for r in results:
+        ws.append([
+            r.get("number", ""),
+            r.get("input_type", ""),
+            r.get("mi_number", ""),
+            r.get("title", ""),
+            r.get("type", ""),
+            r.get("modification", ""),
+            r.get("verification_date", ""),
+            r.get("valid_date", ""),
+            r.get("applicability", ""),
+            r.get("org_title", ""),
+            r.get("result_docnum", ""),
+        ])
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    return send_file(
+        output,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name="results.xlsx",
+    )
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
